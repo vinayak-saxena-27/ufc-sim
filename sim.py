@@ -19,7 +19,7 @@ from rich.rule import Rule
 from rich.table import Table
 from rich.text import Text
 
-from fight import simulate_fight
+from fight import simulate_fight, SCALE
 from templates import generate_population
 
 console = Console()
@@ -35,7 +35,12 @@ def _template_short(template: str) -> str:
     }.get(template, template)
 
 
-def run(n_fights: int, per_template: int, seed: int) -> None:
+def _true_prob(ovr_a: float, ovr_b: float) -> float:
+    """Noiseless logistic probability — shows the structural signal without per-fight jitter."""
+    return 1.0 / (1.0 + 10.0 ** (-(ovr_a - ovr_b) / SCALE))
+
+
+def run(n_fights: int, per_template: int, seed: int, debug: bool = False) -> None:
     random.seed(seed)
     fighters = generate_population(per_template)
     total = len(fighters)
@@ -48,10 +53,33 @@ def run(n_fights: int, per_template: int, seed: int) -> None:
     console.print()
 
     # ── Fight card ────────────────────────────────────────────────────────────
+    if debug:
+        console.print("[dim]  #   Fighter A               OvrA   Fighter B               OvrB   P(A)  Result[/dim]")
+        console.print("[dim]" + "-" * 80 + "[/dim]")
+
     for i in range(n_fights):
         a, b = random.sample(fighters, 2)
+        p_a_wins = _true_prob(a.overall, b.overall)
         winner, loser = simulate_fight(a, b, org="fight_night", tier="regional")
         result = winner.fight_history[-1]
+
+        if debug:
+            a_won = winner is a
+            outcome = "A wins" if a_won else "B wins"
+            upset = (a_won and p_a_wins < 0.5) or (not a_won and p_a_wins >= 0.5)
+            flag = " *" if upset else ""
+            line = Text()
+            line.append(f"  {i+1:>2}  ", style="dim")
+            line.append(f"{a.name:<24}", style="white")
+            line.append(f"{a.overall:>+5.1f}  ", style="cyan")
+            line.append(f"{b.name:<24}", style="white")
+            line.append(f"{b.overall:>+5.1f}  ", style="cyan")
+            line.append(f"{p_a_wins:.2f}  ", style="yellow")
+            line.append(outcome, style="green" if a_won else "red")
+            if upset:
+                line.append(flag, style="bold yellow")
+            console.print(line)
+            continue  # skip the panel output in debug mode
 
         is_upset = (winner is b and a.overall - b.overall > 8) or \
                    (winner is a and b.overall - a.overall > 8)
@@ -72,6 +100,9 @@ def run(n_fights: int, per_template: int, seed: int) -> None:
             body.append("   [UPSET]", style="bold yellow")
 
         console.print(Panel(body, title=f"[dim]Bout {i + 1} of {n_fights}[/dim]", expand=False))
+
+    if debug:
+        console.print("[dim]  * = underdog won[/dim]\n")
 
     # ── Standings ─────────────────────────────────────────────────────────────
     console.print()
@@ -118,8 +149,10 @@ def main() -> None:
     p.add_argument("--fighters", type=int, default=10,  metavar="N",
                    help="fighters per template (default 10, so 50 total)")
     p.add_argument("--seed",     type=int, default=42,  help="random seed (default 42)")
+    p.add_argument("--debug",    action="store_true",
+                   help="print per-fight: overalls, P(A wins), outcome — skips panels")
     args = p.parse_args()
-    run(args.fights, args.fighters, args.seed)
+    run(args.fights, args.fighters, args.seed, debug=args.debug)
 
 
 if __name__ == "__main__":
