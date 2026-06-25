@@ -10,7 +10,7 @@ from fighter import Fighter
 _FIRST_NAMES = [
     "Ivan", "Dmitri", "Ruslan", "Magomed", "Umar", "Islam", "Akhmat", "Zurab",
     "Shamil", "Zalim", "Hajji", "Khabib",
-    "João", "Carlos", "Anderson", "Rafael", "Felipe", "Lucas", "Mauricio", "Gabriel",
+    "Joao", "Carlos", "Anderson", "Rafael", "Felipe", "Lucas", "Mauricio", "Gabriel",
     "Fabricio", "Rodrigo",
     "Marcus", "Tyrone", "Derek", "Dustin", "Justin", "Tony", "Colby", "Gilbert",
     "Sean", "Cory", "Brandon", "Marlon",

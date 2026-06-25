@@ -26,6 +26,7 @@ class Fighter:
     age: int
     region: str
     template: str
+    tier: str = "unknown"   # current competition tier; changes on promotion/demotion
 
     # All skill ratings: uncapped, zero-centered floats (0 = league average).
     # Positive = above average, negative = below average. No floor or ceiling.
