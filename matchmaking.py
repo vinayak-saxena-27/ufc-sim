@@ -11,8 +11,16 @@ from tiers import TIER_LEVELS
 PROMOTE_WINS_IN_LAST:  int   = 4     # wins needed in the last PROMOTE_WINDOW tier-fights
 PROMOTE_WINDOW:        int   = 5     # rolling window size for promotion check
 DEMOTE_LOSSES_IN_LAST: int   = 4     # losses needed in the last DEMOTE_WINDOW tier-fights
-DEMOTE_WINDOW:         int   = 5     # rolling window size for demotion check
+DEMOTE_WINDOW:         int   = 5     # rolling window size for demotion check (tiers 0-3)
 CROSS_TIER_RATE:       float = 0.12  # fraction of fights matched against an adjacent tier
+
+# Elite (tier4) demotion fires on a tighter window so fighters who bomb out don't
+# linger at the top. Generated Elite fighters start with no fight history, so the
+# standard 5-fight window would require 5 tier4 fights before any demotion fires —
+# with a small Elite pool that takes many sim fights. A 3-fight window means a
+# fighter who goes 0-3 or 1-2 at Elite is out after their third bout there.
+ELITE_DEMOTE_LOSSES_IN_LAST: int = 2   # lose 2 of last ELITE_DEMOTE_WINDOW -> demoted
+ELITE_DEMOTE_WINDOW:         int = 3   # shorter window specific to tier4
 
 # HOOK: Replace pick_opponent with hype-driven matchmaking when that system is built.
 # Protective matchmaking (prospect protection, gatekeeper roles, ranking position)
@@ -61,10 +69,14 @@ def check_promotion(fighter: Fighter) -> bool:
 
 
 def check_demotion(fighter: Fighter) -> bool:
-    recent = _recent_tier_fights(fighter, DEMOTE_WINDOW)
-    if len(recent) < DEMOTE_WINDOW:
+    if fighter.tier == "tier4":
+        window, threshold = ELITE_DEMOTE_WINDOW, ELITE_DEMOTE_LOSSES_IN_LAST
+    else:
+        window, threshold = DEMOTE_WINDOW, DEMOTE_LOSSES_IN_LAST
+    recent = _recent_tier_fights(fighter, window)
+    if len(recent) < window:
         return False
-    return sum(1 for r in recent if r.outcome == "loss") >= DEMOTE_LOSSES_IN_LAST
+    return sum(1 for r in recent if r.outcome == "loss") >= threshold
 
 
 def apply_tier_transitions(

@@ -35,12 +35,15 @@ from matchmaking import (
 
 random.seed(42)
 
-PER_TIER_PER_TEMPLATE = 8   # 8 * 5 templates = 40 per tier, 200 total
+# Calibration uses a flat 40 per tier so each tier has a stable enough sample for
+# win-rate statistics. This overrides the pyramid default — it's deliberate.
+CALIB_PER_TIER = 40
+_calib_counts = {t: CALIB_PER_TIER for t in TIER_LEVELS}
 
 # ─── 1. Generate populations ──────────────────────────────────────────────────
-print(f"Generating populations: {PER_TIER_PER_TEMPLATE} per template per tier "
-      f"({PER_TIER_PER_TEMPLATE * 5} per tier, {PER_TIER_PER_TEMPLATE * 5 * 5} total)...\n")
-pools = generate_all_tiers(PER_TIER_PER_TEMPLATE)
+print(f"Generating populations: {CALIB_PER_TIER} per tier x 5 tiers = "
+      f"{CALIB_PER_TIER * 5} total (flat for calibration)...\n")
+pools = generate_all_tiers(per_tier=_calib_counts)
 
 # ─── 2. Per-tier overall summary ──────────────────────────────────────────────
 print("Tier populations (overall mean +/- std):")

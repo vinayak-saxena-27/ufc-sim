@@ -45,6 +45,18 @@ TIER_CONFIG: dict[str, TierConfig] = {
 # Ordered lowest to highest — used for indexing in promotion/demotion logic.
 TIER_LEVELS: list[str] = ["tier0", "tier1", "tier2", "tier3", "tier4"]
 
+# ─── Default population pyramid ───────────────────────────────────────────────
+# Controls how many fighters are seeded per tier at sim start.
+# Tune these to adjust roster depth; the scale= arg in generate_all_tiers
+# multiplies all values uniformly (e.g. scale=0.5 halves the roster).
+TIER_POPULATION: dict[str, int] = {
+    "tier0": 100,   # Amateur         — large base pool
+    "tier1":  70,   # Regional        — large, somewhat smaller
+    "tier2":  35,   # Mid-major       — medium
+    "tier3":  25,   # Top-org btm-15  — small
+    "tier4":  15,   # Top-org elite   — very small; hard to earn, quick to lose
+}
+
 
 # ─── Generator ────────────────────────────────────────────────────────────────
 
@@ -87,14 +99,26 @@ def generate_tier_fighter(template_name: str, tier_key: str) -> Fighter:
     )
 
 
-def generate_all_tiers(per_tier_per_template: int = 8) -> dict[str, list[Fighter]]:
+def generate_all_tiers(
+    per_tier: dict[str, int] | None = None,
+    scale: float = 1.0,
+) -> dict[str, list[Fighter]]:
     """
-    Returns {tier_key: [Fighter, ...]} with fighters from all 5 templates per tier.
-    Default: 8 per template x 5 templates = 40 per tier, 200 total.
+    Returns {tier_key: [Fighter, ...]} seeded according to the population pyramid.
+
+    per_tier: explicit count per tier — overrides TIER_POPULATION and scale.
+    scale:    multiplier on TIER_POPULATION (e.g. 0.5 halves the roster).
+
+    Templates are distributed evenly via cycling so counts need not be multiples of 5.
     """
+    if per_tier is None:
+        per_tier = {t: max(5, round(TIER_POPULATION[t] * scale)) for t in TIER_LEVELS}
+
     pools: dict[str, list[Fighter]] = {t: [] for t in TIER_LEVELS}
+    templates_list = list(TEMPLATES.keys())
     for tier_key in TIER_LEVELS:
-        for tmpl in TEMPLATES:
-            for _ in range(per_tier_per_template):
-                pools[tier_key].append(generate_tier_fighter(tmpl, tier_key))
+        n = per_tier[tier_key]
+        for i in range(n):
+            tmpl = templates_list[i % len(templates_list)]
+            pools[tier_key].append(generate_tier_fighter(tmpl, tier_key))
     return pools

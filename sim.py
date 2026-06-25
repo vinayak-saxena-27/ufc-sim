@@ -48,9 +48,9 @@ def _true_prob(ovr_a: float, ovr_b: float) -> float:
     return 1.0 / (1.0 + 10.0 ** (-(ovr_a - ovr_b) / SCALE))
 
 
-def run(n_fights: int, per_tier_per_template: int, seed: int, debug: bool = False) -> None:
+def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
     random.seed(seed)
-    pools = generate_all_tiers(per_tier_per_template)
+    pools = generate_all_tiers(scale=scale)
     all_fighters = [f for pool in pools.values() for f in pool]
     total = len(all_fighters)
 
@@ -197,13 +197,13 @@ def run(n_fights: int, per_tier_per_template: int, seed: int, debug: bool = Fals
 def main() -> None:
     p = argparse.ArgumentParser(description="MMA fight-night simulator (tier-constrained)")
     p.add_argument("--fights",    type=int, default=300, help="number of bouts (default 300)")
-    p.add_argument("--fighters",  type=int, default=4,   metavar="N",
-                   help="fighters per template per tier (default 4: 4*5*5=100 total)")
+    p.add_argument("--fighters",  type=float, default=1.0, metavar="SCALE",
+                   help="population scale factor (default 1.0 -> 100/70/35/25/15 per tier = 245 total)")
     p.add_argument("--seed",      type=int, default=42,  help="random seed (default 42)")
     p.add_argument("--debug",     action="store_true",
                    help="print per-fight: overalls, P(A wins), outcome -- skips panels")
     args = p.parse_args()
-    run(args.fights, args.fighters, args.seed, debug=args.debug)
+    run(args.fights, args.fighters, args.seed, debug=args.debug)  # type: ignore[arg-type]
 
 
 if __name__ == "__main__":
