@@ -27,11 +27,16 @@ ELITE_DEMOTE_WINDOW:         int = 3   # shorter window specific to tier4
 # also plugs in here. For now: simple tier-pool sampling with a small cross-tier rate.
 
 
-def pick_opponent(fighter: Fighter, pools: dict[str, list[Fighter]]) -> Fighter:
+def pick_opponent(
+    fighter: Fighter,
+    pools: dict[str, dict[str, list[Fighter]]],
+) -> Fighter:
     """
-    Selects an opponent with tier-constrained matchmaking.
+    Selects an opponent with tier-constrained, division-partitioned matchmaking.
     ~88% of fights stay within the same tier; ~12% cross one tier up or down.
+    Opponents are ALWAYS drawn from the same weight class — no cross-division fights.
     """
+    wc = fighter.weight_class
     own_idx = TIER_LEVELS.index(fighter.tier)
 
     if random.random() < CROSS_TIER_RATE:
@@ -44,11 +49,11 @@ def pick_opponent(fighter: Fighter, pools: dict[str, list[Fighter]]) -> Fighter:
     else:
         opp_tier = fighter.tier
 
-    candidates = [f for f in pools[opp_tier] if f is not fighter]
+    candidates = [f for f in pools[wc][opp_tier] if f is not fighter]
     if not candidates:
-        # Fallback: broaden search if the preferred pool has no valid opponent.
+        # Fallback: broaden within the same division if the preferred tier pool is empty.
         for tier in TIER_LEVELS:
-            candidates = [f for f in pools[tier] if f is not fighter]
+            candidates = [f for f in pools[wc][tier] if f is not fighter]
             if candidates:
                 break
 
@@ -81,28 +86,29 @@ def check_demotion(fighter: Fighter) -> bool:
 
 def apply_tier_transitions(
     fighter: Fighter,
-    pools: dict[str, list[Fighter]],
+    pools: dict[str, dict[str, list[Fighter]]],
 ) -> str | None:
     """
-    Checks whether fighter should move up or down one tier.
-    Mutates fighter.tier and pools in place. Returns new tier key on transition,
-    else None.
+    Checks whether fighter should move up or down one tier within their division.
+    Mutates fighter.tier and pools in place. Returns new tier key on transition, else None.
 
-    Only the opponent pool changes — fighter's sub-attributes and overall are
-    never modified. True skill is fixed at generation time.
+    Promotion/demotion is always within the same weight class — fighters never cross
+    divisions via tier transitions. Only the pool membership changes; sub-attributes
+    and overall are never modified.
     """
+    wc  = fighter.weight_class
     idx = TIER_LEVELS.index(fighter.tier)
 
     if idx < len(TIER_LEVELS) - 1 and check_promotion(fighter):
-        pools[fighter.tier].remove(fighter)
+        pools[wc][fighter.tier].remove(fighter)
         fighter.tier = TIER_LEVELS[idx + 1]
-        pools[fighter.tier].append(fighter)
+        pools[wc][fighter.tier].append(fighter)
         return fighter.tier
 
     if idx > 0 and check_demotion(fighter):
-        pools[fighter.tier].remove(fighter)
+        pools[wc][fighter.tier].remove(fighter)
         fighter.tier = TIER_LEVELS[idx - 1]
-        pools[fighter.tier].append(fighter)
+        pools[wc][fighter.tier].append(fighter)
         return fighter.tier
 
     return None

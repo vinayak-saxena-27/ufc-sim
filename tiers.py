@@ -45,6 +45,15 @@ TIER_CONFIG: dict[str, TierConfig] = {
 # Ordered lowest to highest — used for indexing in promotion/demotion logic.
 TIER_LEVELS: list[str] = ["tier0", "tier1", "tier2", "tier3", "tier4"]
 
+# Weight classes in scope for Session 3. Three divisions (light/mid/heavy) were chosen to
+# span the range without building all 8 yet. Add remaining five later.
+# HOOK: per-template weight-class affinity (e.g. American Wrestling skewing Heavyweight)
+# is explicitly deferred — that correlation belongs in a future session once partitioning
+# is validated with random assignment.
+# HOOK: cross-weight-class movement (weight cuts/gains + skill-transfer rules) is future
+# work that deserves its own session — a weight change is NOT a 1:1 skill transfer.
+WEIGHT_CLASSES: list[str] = ["lightweight", "welterweight", "heavyweight"]
+
 # ─── Default population pyramid ───────────────────────────────────────────────
 # Controls how many fighters are seeded per tier at sim start.
 # Tune these to adjust roster depth; the scale= arg in generate_all_tiers
@@ -65,7 +74,7 @@ def _template_natural_overall(template_name: str) -> float:
     return _mean(m for m, _ in TEMPLATES[template_name].values())
 
 
-def generate_tier_fighter(template_name: str, tier_key: str) -> Fighter:
+def generate_tier_fighter(template_name: str, tier_key: str, weight_class: str = "unknown") -> Fighter:
     """
     Creates a fighter whose overall centers on the tier distribution and whose
     attribute profile preserves the template's stylistic identity.
@@ -94,6 +103,7 @@ def generate_tier_fighter(template_name: str, tier_key: str) -> Fighter:
         region=_TEMPLATE_REGIONS[template_name],
         template=template_name,
         tier=tier_key,
+        weight_class=weight_class,
         hype=_sample_hype(attrs["power"], attrs["athleticism"]),
         **attrs,
     )
@@ -102,23 +112,32 @@ def generate_tier_fighter(template_name: str, tier_key: str) -> Fighter:
 def generate_all_tiers(
     per_tier: dict[str, int] | None = None,
     scale: float = 1.0,
-) -> dict[str, list[Fighter]]:
+    weight_classes: list[str] | None = None,
+) -> dict[str, dict[str, list[Fighter]]]:
     """
-    Returns {tier_key: [Fighter, ...]} seeded according to the population pyramid.
+    Returns {weight_class: {tier_key: [Fighter, ...]}} seeded per-division.
 
-    per_tier: explicit count per tier — overrides TIER_POPULATION and scale.
-    scale:    multiplier on TIER_POPULATION (e.g. 0.5 halves the roster).
+    Each weight class gets its own independent pyramid — TIER_POPULATION counts
+    apply per division, not in aggregate. Total fighters = sum(per_tier) * len(weight_classes).
 
-    Templates are distributed evenly via cycling so counts need not be multiples of 5.
+    per_tier:       explicit per-tier count (overrides TIER_POPULATION + scale).
+    scale:          multiplier on TIER_POPULATION defaults.
+    weight_classes: defaults to WEIGHT_CLASSES (lightweight/welterweight/heavyweight).
     """
+    if weight_classes is None:
+        weight_classes = WEIGHT_CLASSES
     if per_tier is None:
         per_tier = {t: max(5, round(TIER_POPULATION[t] * scale)) for t in TIER_LEVELS}
 
-    pools: dict[str, list[Fighter]] = {t: [] for t in TIER_LEVELS}
+    pools: dict[str, dict[str, list[Fighter]]] = {
+        wc: {t: [] for t in TIER_LEVELS}
+        for wc in weight_classes
+    }
     templates_list = list(TEMPLATES.keys())
-    for tier_key in TIER_LEVELS:
-        n = per_tier[tier_key]
-        for i in range(n):
-            tmpl = templates_list[i % len(templates_list)]
-            pools[tier_key].append(generate_tier_fighter(tmpl, tier_key))
+    for wc in weight_classes:
+        for tier_key in TIER_LEVELS:
+            n = per_tier[tier_key]
+            for i in range(n):
+                tmpl = templates_list[i % len(templates_list)]
+                pools[wc][tier_key].append(generate_tier_fighter(tmpl, tier_key, wc))
     return pools

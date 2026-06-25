@@ -21,7 +21,7 @@ from rich.table import Table
 from rich.text import Text
 
 from fight import simulate_fight, SCALE
-from tiers import TIER_CONFIG, TIER_LEVELS, generate_all_tiers
+from tiers import TIER_CONFIG, TIER_LEVELS, WEIGHT_CLASSES, generate_all_tiers
 from matchmaking import pick_opponent, apply_tier_transitions
 
 console = Console()
@@ -32,6 +32,12 @@ _TIER_SHORT: dict[str, str] = {
     "tier2": "Mid-major",
     "tier3": "Top-org",
     "tier4": "Elite",
+}
+
+_WC_SHORT: dict[str, str] = {
+    "lightweight":  "LW",
+    "welterweight": "WW",
+    "heavyweight":  "HW",
 }
 
 _TEMPLATE_SHORT: dict[str, str] = {
@@ -51,20 +57,26 @@ def _true_prob(ovr_a: float, ovr_b: float) -> float:
 def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
     random.seed(seed)
     pools = generate_all_tiers(scale=scale)
-    all_fighters = [f for pool in pools.values() for f in pool]
+    all_fighters = [
+        f
+        for wc_pools in pools.values()
+        for tier_pool in wc_pools.values()
+        for f in tier_pool
+    ]
     total = len(all_fighters)
 
-    tier_counts = {t: len(pools[t]) for t in TIER_LEVELS}
     console.print()
     console.print(
         f"[bold cyan]MMA Fight Night[/bold cyan]  "
-        f"[dim]seed={seed}  |  {total} fighters  |  {n_fights} bouts[/dim]"
+        f"[dim]seed={seed}  |  {total} fighters across {len(WEIGHT_CLASSES)} divisions  |  {n_fights} bouts[/dim]"
     )
-    console.print(
-        f"[dim]  Tiers: "
-        + "  ".join(f"{_TIER_SHORT[t]}={tier_counts[t]}" for t in TIER_LEVELS)
-        + "[/dim]"
-    )
+    for wc in WEIGHT_CLASSES:
+        wc_total = sum(len(pools[wc][t]) for t in TIER_LEVELS)
+        console.print(
+            f"[dim]  {_WC_SHORT[wc]}:  "
+            + "  ".join(f"{_TIER_SHORT[t]}={len(pools[wc][t])}" for t in TIER_LEVELS)
+            + f"  ({wc_total})[/dim]"
+        )
     console.print()
 
     if debug:
@@ -109,10 +121,18 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
 
         body = Text()
         body.append(f"  {a.name}", style="bold white")
-        body.append(f"  ({_TIER_SHORT.get(a.tier, a.tier)}, {a.overall:+.1f})\n", style="dim")
+        body.append(
+            f"  ({_WC_SHORT.get(a.weight_class, a.weight_class)} | "
+            f"{_TIER_SHORT.get(a.tier, a.tier)}, {a.overall:+.1f})\n",
+            style="dim",
+        )
         body.append("     vs\n", style="dim")
         body.append(f"  {b.name}", style="bold white")
-        body.append(f"  ({_TIER_SHORT.get(b.tier, b.tier)}, {b.overall:+.1f})\n\n", style="dim")
+        body.append(
+            f"  ({_WC_SHORT.get(b.weight_class, b.weight_class)} | "
+            f"{_TIER_SHORT.get(b.tier, b.tier)}, {b.overall:+.1f})\n\n",
+            style="dim",
+        )
         body.append(f"  WINNER  {winner.name}", style="bold green")
         body.append(f"  by {result.method}\n", style="green")
         body.append(
@@ -150,6 +170,7 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
     table = Table(box=box.SIMPLE_HEAD, show_lines=False, padding=(0, 1))
     table.add_column("#",       justify="right",  style="dim",     width=3)
     table.add_column("Fighter", no_wrap=True,     style="white",   min_width=20)
+    table.add_column("Div",     style="cyan",      width=4)
     table.add_column("Tier",    style="dim",       width=10)
     table.add_column("Style",   style="dim",       width=10)
     table.add_column("Rec",     justify="center", style="bold",    width=6)
@@ -167,6 +188,7 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
         table.add_row(
             str(rank),
             f.name,
+            _WC_SHORT.get(f.weight_class, f.weight_class),
             _TIER_SHORT.get(f.tier, f.tier),
             _TEMPLATE_SHORT.get(f.template, f.template),
             f"[{rec_style}]{f.record_str}[/{rec_style}]",
@@ -176,17 +198,47 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
 
     console.print(table)
 
-    # Tier summary
+    # ── Division pyramid cross-tab ─────────────────────────────────────────────
     console.print()
-    for tier_key in reversed(TIER_LEVELS):
-        tier_fighters = [f for f in active if f.tier == tier_key]
-        if tier_fighters:
-            avg_ovr = sum(f.overall for f in tier_fighters) / len(tier_fighters)
-            console.print(
-                f"[dim]  {_TIER_SHORT[tier_key]:<10}  "
-                f"{len(tier_fighters):>3} active fighters  "
-                f"avg ovr {avg_ovr:>+.1f}[/dim]"
-            )
+    console.print(Rule("[bold]Division Pyramid (active fighters)[/bold]"))
+    console.print()
+
+    _col_w = 10
+    header = f"  {'':10}" + "".join(f"{_TIER_SHORT[t]:>{_col_w}}" for t in TIER_LEVELS) + f"{'Total':>{_col_w}}"
+    console.print(f"[dim]{header}[/dim]")
+
+    tier_totals = {t: 0 for t in TIER_LEVELS}
+    grand_total = 0
+    for wc in WEIGHT_CLASSES:
+        wc_active = [f for f in active if f.weight_class == wc]
+        counts = {t: sum(1 for f in wc_active if f.tier == t) for t in TIER_LEVELS}
+        row_total = sum(counts.values())
+        row = f"  {_WC_SHORT[wc]:<10}" + "".join(f"{counts[t]:>{_col_w}}" for t in TIER_LEVELS) + f"{row_total:>{_col_w}}"
+        console.print(row)
+        for t in TIER_LEVELS:
+            tier_totals[t] += counts[t]
+        grand_total += row_total
+
+    sep = "  " + "-" * (10 + _col_w * (len(TIER_LEVELS) + 1))
+    console.print(f"[dim]{sep}[/dim]")
+    total_row = f"  {'All':10}" + "".join(f"{tier_totals[t]:>{_col_w}}" for t in TIER_LEVELS) + f"{grand_total:>{_col_w}}"
+    console.print(f"[dim]{total_row}[/dim]")
+
+    # ── Per-division skill staircase ───────────────────────────────────────────
+    console.print()
+    console.print(Rule("[bold]Avg overall per tier per division[/bold]"))
+    console.print()
+
+    header2 = f"  {'':10}" + "".join(f"{_TIER_SHORT[t]:>{_col_w}}" for t in TIER_LEVELS)
+    console.print(f"[dim]{header2}[/dim]")
+    for wc in WEIGHT_CLASSES:
+        wc_active = [f for f in active if f.weight_class == wc]
+        cells = []
+        for t in TIER_LEVELS:
+            cohort = [f.overall for f in wc_active if f.tier == t]
+            cells.append(f"{sum(cohort)/len(cohort):>+.1f}" if cohort else f"{'--':>10}")
+        row = f"  {_WC_SHORT[wc]:<10}" + "".join(f"{c:>{_col_w}}" for c in cells)
+        console.print(row)
 
     not_active = total - len(active)
     if not_active:

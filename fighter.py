@@ -26,7 +26,11 @@ class Fighter:
     age: int
     region: str
     template: str
-    tier: str = "unknown"   # current competition tier; changes on promotion/demotion
+    tier: str = "unknown"           # current competition tier; changes on promotion/demotion
+    weight_class: str = "unknown"  # "lightweight" | "welterweight" | "heavyweight"
+    # HOOK: weight-class affinity per template (e.g. American Wrestling skewing Heavyweight,
+    # Muay Thai/SEA skewing Lightweight) is future work — deferred to a later session so the
+    # partitioning logic can be validated with random assignment first.
 
     # All skill ratings: uncapped, zero-centered floats (0 = league average).
     # Positive = above average, negative = below average. No floor or ceiling.

@@ -27,7 +27,7 @@ from statistics import mean, stdev
 
 from fighter import Fighter, ATTR_NAMES
 from fight import win_probability, SCALE, NOISE_STD
-from tiers import TIER_CONFIG, TIER_LEVELS, generate_all_tiers
+from tiers import TIER_CONFIG, TIER_LEVELS, WEIGHT_CLASSES, generate_all_tiers
 from matchmaking import (
     pick_opponent, apply_tier_transitions,
     PROMOTE_WINDOW, PROMOTE_WINS_IN_LAST, DEMOTE_WINDOW, DEMOTE_LOSSES_IN_LAST,
@@ -37,19 +37,25 @@ random.seed(42)
 
 # Calibration uses a flat 40 per tier so each tier has a stable enough sample for
 # win-rate statistics. This overrides the pyramid default — it's deliberate.
+# With 3 weight classes the total is 40 * 5 * 3 = 600 fighters, but calibration
+# statistics only use one division's pools (skill distribution is identical across
+# weight classes — they're the same draws from the same tier distributions).
 CALIB_PER_TIER = 40
 _calib_counts = {t: CALIB_PER_TIER for t in TIER_LEVELS}
+_CALIB_WC = WEIGHT_CLASSES[0]   # "lightweight" — representative, all divisions identical
 
 # ─── 1. Generate populations ──────────────────────────────────────────────────
-print(f"Generating populations: {CALIB_PER_TIER} per tier x 5 tiers = "
-      f"{CALIB_PER_TIER * 5} total (flat for calibration)...\n")
+n_total = CALIB_PER_TIER * len(TIER_LEVELS) * len(WEIGHT_CLASSES)
+print(f"Generating populations: {CALIB_PER_TIER} per tier x {len(TIER_LEVELS)} tiers "
+      f"x {len(WEIGHT_CLASSES)} divisions = {n_total} total (flat per-tier for calibration)...\n")
 pools = generate_all_tiers(per_tier=_calib_counts)
 
 # ─── 2. Per-tier overall summary ──────────────────────────────────────────────
-print("Tier populations (overall mean +/- std):")
+# Uses one division as representative; all divisions draw from the same distributions.
+print(f"Tier populations (overall mean +/- std, {_CALIB_WC} division shown):")
 for tier_key in TIER_LEVELS:
     cfg   = TIER_CONFIG[tier_key]
-    ovrs  = [f.overall for f in pools[tier_key]]
+    ovrs  = [f.overall for f in pools[_CALIB_WC][tier_key]]
     print(f"  {cfg.label:<20} center={cfg.center:>+5.0f}  "
           f"generated: {mean(ovrs):>+5.1f} +/- {stdev(ovrs):.1f}  "
           f"range [{min(ovrs):>+5.1f}, {max(ovrs):>+5.1f}]")
@@ -66,7 +72,7 @@ print("-" * 95)
 for tier_key in TIER_LEVELS:
     label = TIER_CONFIG[tier_key].label
     for tmpl in ("dagestan_sambo", "muay_thai"):
-        f = next(x for x in pools[tier_key] if x.template == tmpl)
+        f = next(x for x in pools[_CALIB_WC][tier_key] if x.template == tmpl)
         print(_H.format(
             label, tmpl.replace("_", " "), f.name,
             f"{f.overall:>+.1f}",
@@ -100,8 +106,8 @@ print(f"Calibration fighters:")
 print(f"  Anchor  target={ANCHOR_OVERALL:>+.0f}  actual overall={anchor.overall:>+.1f}")
 print(f"  TopTier target={TOPTIER_OVERALL:>+.0f}  actual overall={top_tier.overall:>+.1f}")
 
-tier2_pool = pools["tier2"]
-tier3_pool = pools["tier3"]
+tier2_pool = pools[_CALIB_WC]["tier2"]
+tier3_pool = pools[_CALIB_WC]["tier3"]
 print(f"  Tier 2 pool: {len(tier2_pool)} fighters, "
       f"overall {mean(f.overall for f in tier2_pool):>+.1f} "
       f"+/- {stdev(f.overall for f in tier2_pool):.1f}")
@@ -184,7 +190,12 @@ print("=" * 62)
 print("GENERAL SIM (500 fights, tier-constrained matchmaking)")
 print("=" * 62)
 
-all_fighters = [f for pool in pools.values() for f in pool]
+all_fighters = [
+    f
+    for wc_pools in pools.values()
+    for tier_pool in wc_pools.values()
+    for f in tier_pool
+]
 promotions: list[tuple[str, str, str]] = []  # (name, old_tier, new_tier)
 demotions:  list[tuple[str, str, str]] = []
 
@@ -226,14 +237,17 @@ active.sort(
     reverse=True,
 )
 
-_SF = "{:<4} {:<24} {:<16} {:<14} {:>6} {:>6} {:>6}"
+_WCS = {"lightweight": "LW", "welterweight": "WW", "heavyweight": "HW"}
+_SF = "{:<4} {:<24} {:<4} {:<16} {:<14} {:>6} {:>6} {:>6}"
 print()
-print(_SF.format("Rank", "Fighter", "Tier", "Style", "Rec", "Ovr", "Hype"))
-print("-" * 80)
+print(_SF.format("Rank", "Fighter", "Div", "Tier", "Style", "Rec", "Ovr", "Hype"))
+print("-" * 88)
 for rank, f in enumerate(active[:40], 1):
     tier_label = _TC[f.tier].label
     print(_SF.format(
-        rank, f.name, tier_label,
+        rank, f.name,
+        _WCS.get(f.weight_class, "??"),
+        tier_label,
         f.template.replace("_", " ")[:14],
         f.record_str,
         f"{f.overall:>+.1f}",
