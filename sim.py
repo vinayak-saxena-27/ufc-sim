@@ -1,12 +1,12 @@
 """
-Fight-night simulator with rich terminal output (Session 2: tier-constrained matchmaking).
+Fight-night simulator with rich terminal output.
 
 Usage:
-  python sim.py                          # 300 fights, 4 fighters per template per tier
-  python sim.py --fights 500             # more fights
-  python sim.py --fighters 6             # larger roster (6 * 5 * 5 = 150 fighters)
+  python sim.py                          # 2000 fights, default pyramid roster (~735 fighters)
+  python sim.py --fights 5000            # more fights
+  python sim.py --fighters 1.5           # bigger roster (~1100 fighters)
   python sim.py --seed 7                 # different random seed
-  python sim.py --debug                  # per-fight probability diagnostic, skip panels
+  python sim.py --debug                  # per-fight compact table instead of panels
 """
 from __future__ import annotations
 
@@ -152,51 +152,52 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
     if debug:
         console.print("[dim]  * = underdog won[/dim]\n")
 
-    # ── Standings ─────────────────────────────────────────────────────────────
-    console.print()
-    console.print(Rule("[bold]Standings - fighters who competed[/bold]"))
-    console.print()
-
+    # ── Standings — one table per weight class ───────────────────────────────
     active = [f for f in all_fighters if f.wins + f.losses > 0]
-    active.sort(
-        key=lambda f: (
-            TIER_LEVELS.index(f.tier),
-            f.wins / (f.wins + f.losses),
-            f.overall,
-        ),
-        reverse=True,
-    )
 
-    table = Table(box=box.SIMPLE_HEAD, show_lines=False, padding=(0, 1))
-    table.add_column("#",       justify="right",  style="dim",     width=3)
-    table.add_column("Fighter", no_wrap=True,     style="white",   min_width=20)
-    table.add_column("Div",     style="cyan",      width=4)
-    table.add_column("Tier",    style="dim",       width=10)
-    table.add_column("Style",   style="dim",       width=10)
-    table.add_column("Rec",     justify="center", style="bold",    width=6)
-    table.add_column("Ovr",     justify="right",  style="cyan",    width=6)
-    table.add_column("Hype",    justify="right",  style="magenta", width=6)
-
-    for rank, f in enumerate(active, 1):
-        if f.wins > f.losses:
-            rec_style = "bold green"
-        elif f.losses > f.wins:
-            rec_style = "red"
-        else:
-            rec_style = "yellow"
-
-        table.add_row(
-            str(rank),
-            f.name,
-            _WC_SHORT.get(f.weight_class, f.weight_class),
-            _TIER_SHORT.get(f.tier, f.tier),
-            _TEMPLATE_SHORT.get(f.template, f.template),
-            f"[{rec_style}]{f.record_str}[/{rec_style}]",
-            f"{f.overall:+.1f}",
-            f"{f.hype:+.1f}",
+    for wc in WEIGHT_CLASSES:
+        wc_fighters = [f for f in active if f.weight_class == wc]
+        wc_fighters.sort(
+            key=lambda f: (
+                TIER_LEVELS.index(f.tier),
+                f.wins / (f.wins + f.losses),
+                f.overall,
+            ),
+            reverse=True,
         )
 
-    console.print(table)
+        console.print()
+        console.print(Rule(f"[bold]{wc.title()} — {_WC_SHORT[wc]}[/bold]"))
+        console.print()
+
+        table = Table(box=box.SIMPLE_HEAD, show_lines=False, padding=(0, 1))
+        table.add_column("#",       justify="right",  style="dim",     width=3)
+        table.add_column("Fighter", no_wrap=True,     style="white",   min_width=20)
+        table.add_column("Tier",    style="dim",       width=10)
+        table.add_column("Style",   style="dim",       width=10)
+        table.add_column("Rec",     justify="center", style="bold",    width=6)
+        table.add_column("Ovr",     justify="right",  style="cyan",    width=6)
+        table.add_column("Hype",    justify="right",  style="magenta", width=6)
+
+        for rank, f in enumerate(wc_fighters, 1):
+            if f.wins > f.losses:
+                rec_style = "bold green"
+            elif f.losses > f.wins:
+                rec_style = "red"
+            else:
+                rec_style = "yellow"
+
+            table.add_row(
+                str(rank),
+                f.name,
+                _TIER_SHORT.get(f.tier, f.tier),
+                _TEMPLATE_SHORT.get(f.template, f.template),
+                f"[{rec_style}]{f.record_str}[/{rec_style}]",
+                f"{f.overall:+.1f}",
+                f"{f.hype:+.1f}",
+            )
+
+        console.print(table)
 
     # ── Division pyramid cross-tab ─────────────────────────────────────────────
     console.print()
@@ -248,7 +249,7 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
 
 def main() -> None:
     p = argparse.ArgumentParser(description="MMA fight-night simulator (tier-constrained)")
-    p.add_argument("--fights",    type=int, default=300, help="number of bouts (default 300)")
+    p.add_argument("--fights",    type=int, default=2000, help="number of bouts (default 2000)")
     p.add_argument("--fighters",  type=float, default=1.0, metavar="SCALE",
                    help="population scale factor (default 1.0 -> 100/70/35/25/15 per tier = 245 total)")
     p.add_argument("--seed",      type=int, default=42,  help="random seed (default 42)")
