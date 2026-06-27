@@ -45,6 +45,29 @@ TIER_CONFIG: dict[str, TierConfig] = {
 # Ordered lowest to highest — used for indexing in promotion/demotion logic.
 TIER_LEVELS: list[str] = ["tier0", "tier1", "tier2", "tier3", "tier4"]
 
+
+# ─── Per-tier ruleset ─────────────────────────────────────────────────────────
+# Governs round count and round length.  title_rounds=None means the tier has
+# no championship format (Amateur).  Regional's title stays at 3 rounds — this
+# is a deliberate deviation from every other pro tier, not a bug.
+# round_seconds feeds into TICKS_PER_ROUND (= round_seconds // TICK_SECONDS)
+# in fight_engine so it actually affects how long each simulated round runs.
+
+@dataclass(frozen=True)
+class RulesetConfig:
+    non_title_rounds: int
+    title_rounds: int | None   # None = no title fights at this tier
+    round_seconds: int
+
+
+TIER_RULESET: dict[str, RulesetConfig] = {
+    "tier0": RulesetConfig(3, None, 180),   # Amateur: 3-min rounds, no title
+    "tier1": RulesetConfig(3, 3,    300),   # Regional: title stays 3 rounds (deliberate)
+    "tier2": RulesetConfig(3, 5,    300),   # Mid-major
+    "tier3": RulesetConfig(3, 5,    300),   # Top-org btm-15
+    "tier4": RulesetConfig(3, 5,    300),   # Top-org elite
+}
+
 # Weight classes in scope for Session 3. Three divisions (light/mid/heavy) were chosen to
 # span the range without building all 8 yet. Add remaining five later.
 # HOOK: per-template weight-class affinity (e.g. American Wrestling skewing Heavyweight)
