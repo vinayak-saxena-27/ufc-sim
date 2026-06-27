@@ -4,6 +4,7 @@ import random
 
 from fighter import Fighter
 from tiers import TIER_LEVELS
+from academies import ACADEMY_PIPELINE
 
 # ─── Tuning constants ─────────────────────────────────────────────────────────
 # Adjust once you see promotion/demotion rates in sim output.
@@ -13,6 +14,17 @@ PROMOTE_WINDOW:        int   = 5     # rolling window size for promotion check
 DEMOTE_LOSSES_IN_LAST: int   = 4     # losses needed in the last DEMOTE_WINDOW tier-fights
 DEMOTE_WINDOW:         int   = 5     # rolling window size for demotion check (tiers 0-3)
 CROSS_TIER_RATE:       float = 0.12  # fraction of fights matched against an adjacent tier
+
+# Effect 2 (pipeline bias) -- direct promotion nudge.
+# Fighters one win short of the promotion threshold get a small probabilistic
+# second chance, scaled by their academy's pipeline_strength.
+#
+# Relative magnitude vs Effect 1 (hype modifier):
+#   Effect 1 adds pipeline_strength directly to hype (e.g. +9 pts at max).
+#   Effect 2 fires at most ~18% of the time (ps=+9, scale=0.02) and only when
+#   the fighter is exactly one win short -- expected extra promotion rate ~4-5%.
+#   Effect 1 is the PRIMARY mechanism; Effect 2 is a secondary "insider access" nudge.
+PROMO_DIRECT_NUDGE_SCALE: float = 0.02
 
 # Elite (tier4) demotion fires on a tighter window so fighters who bomb out don't
 # linger at the top. Generated Elite fighters start with no fight history, so the
@@ -70,7 +82,16 @@ def check_promotion(fighter: Fighter) -> bool:
     recent = _recent_tier_fights(fighter, PROMOTE_WINDOW)
     if len(recent) < PROMOTE_WINDOW:
         return False
-    return sum(1 for r in recent if r.outcome == "win") >= PROMOTE_WINS_IN_LAST
+    wins = sum(1 for r in recent if r.outcome == "win")
+    if wins >= PROMOTE_WINS_IN_LAST:
+        return True
+    # Effect 2: small direct nudge for well-connected academies.
+    # Only fires when fighter is exactly one win short and academy has positive pipeline.
+    if wins == PROMOTE_WINS_IN_LAST - 1:
+        ps = ACADEMY_PIPELINE.get(fighter.academy, 0.0)
+        if ps > 0.0 and random.random() < ps * PROMO_DIRECT_NUDGE_SCALE:
+            return True
+    return False
 
 
 def check_demotion(fighter: Fighter) -> bool:

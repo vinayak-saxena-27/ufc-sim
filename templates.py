@@ -124,7 +124,7 @@ def generate_fighter(template_name: str) -> Fighter:
         region=_TEMPLATE_REGIONS[template_name],
         template=template_name,
         academy=academy.name,
-        hype=_sample_hype(attrs["power"], attrs["athleticism"]),
+        hype=_sample_hype(attrs["power"], attrs["athleticism"]) + academy.pipeline_strength,
         **attrs,
     )
 

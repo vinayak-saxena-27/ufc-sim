@@ -131,7 +131,7 @@ def generate_tier_fighter(template_name: str, tier_key: str, weight_class: str =
         tier=tier_key,
         weight_class=weight_class,
         academy=academy.name,
-        hype=_sample_hype(attrs["power"], attrs["athleticism"]),
+        hype=_sample_hype(attrs["power"], attrs["athleticism"]) + academy.pipeline_strength,
         **attrs,
     )
 
