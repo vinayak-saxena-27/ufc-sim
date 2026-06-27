@@ -40,47 +40,40 @@ def win_probability(fighter_a: Fighter, fighter_b: Fighter) -> float:
     return 1.0 / (1.0 + 10.0 ** (-diff / SCALE))
 
 
-def _pick_method(win_prob: float) -> str:
-    """Crude finish-type assignment. Dominant winners finish more often."""
-    if win_prob >= 0.70:
-        return random.choices(["KO/TKO", "submission", "decision"], weights=[35, 25, 40])[0]
-    elif win_prob >= 0.55:
-        return random.choices(["KO/TKO", "submission", "decision"], weights=[20, 15, 65])[0]
-    else:
-        return random.choices(["KO/TKO", "submission", "decision"], weights=[15, 10, 75])[0]
-
-
 def simulate_fight(
     fighter_a: Fighter,
     fighter_b: Fighter,
     org: str = "unknown",
+    *,
+    is_title: bool = False,
 ) -> tuple[Fighter, Fighter]:
     """
-    Simulates one fight, records results in both fighters' fight_history,
-    and returns (winner, loser).
+    Simulate one fight using the phase-based engine (4a/4b/4c).
 
-    Each fighter's FightResult is tagged with their OWN tier at the time of
-    the fight — so tier-split record queries and the promotion/demotion window
-    check stay consistent even across cross-tier (reach) fights.
+    Records FightResult in both fighters' fight_history and returns (winner, loser).
+    Method ("KO/TKO", "submission", "decision") comes from the actual fight resolution
+    rather than probability weights.
 
-    HOOK: Real fight resolution (phase engine) replaces the win_probability call.
+    win_probability() is preserved above for smoke_test.py calibration runs; it is
+    no longer called from here.
     """
-    p = win_probability(fighter_a, fighter_b)
-    winner, loser = (fighter_a, fighter_b) if random.random() < p else (fighter_b, fighter_a)
-    effective_p = p if winner is fighter_a else 1.0 - p
-    method = _pick_method(effective_p)
+    from fight_engine import simulate_full_fight
+
+    outcome = simulate_full_fight(fighter_a, fighter_b, is_title=is_title)
+    winner  = fighter_a if outcome.winner_name == fighter_a.name else fighter_b
+    loser   = fighter_b if winner is fighter_a else fighter_a
 
     winner.fight_history.append(FightResult(
         opponent_name=loser.name,
         outcome="win",
-        method=method,
+        method=outcome.method,
         org=org,
         tier=winner.tier,
     ))
     loser.fight_history.append(FightResult(
         opponent_name=winner.name,
         outcome="loss",
-        method=method,
+        method=outcome.method,
         org=org,
         tier=loser.tier,
     ))

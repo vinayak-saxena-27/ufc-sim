@@ -44,8 +44,13 @@ BASE_SUB_RATE:    float = 0.15   # GROUND submission attempt rate from top
 # Passive positional contributions to round score (per tick, before recency).
 # GROUND-top earns this regardless of active work -- the "controls without finishing"
 # scenario produces high round-score but zero finish-pressure.
-GROUND_PASSIVE_RATE:  float = 0.60   # per-tick passive bonus; scaled by wrestling logistic
-CLINCH_PASSIVE_SCALE: float = 0.30   # fraction of clinch-gap logistic added as passive
+GROUND_PASSIVE_RATE:    float = 0.25   # per-tick passive bonus for top; scaled by wrestling logistic
+GROUND_RESISTANCE_BASE: float = 0.25   # per-tick base credit for GROUND-bottom fighter;
+# scaled by bottom fighter's own bjj+athleticism (absolute skill), not the wrestling gap.
+# Replaces the old `0.15 * (1-logistic(gap))` formula which scaled INVERSELY with
+# opponent dominance, giving near-zero credit to the bottom fighter in exactly the
+# matchups where the gap is largest.
+CLINCH_PASSIVE_SCALE:   float = 0.30   # fraction of clinch-gap logistic added as passive
 
 # Dominance level: cumulative scalar for GROUND-top control quality.
 # Driven by time held and wrestling skill gap.  Feeds post-round narrative in 4c.
@@ -252,8 +257,10 @@ def _compute_segment(
             dom_top = DOMINANCE_PER_TICK * _logistic(wrestling_gap) * ticks
 
             # --- BOTTOM fighter: survival / resistance credit ---
-            # Decreases as wrestling gap widens -- dominated fighter earns very little.
-            resistance_rate = 0.15 * (1.0 - _logistic(wrestling_gap))
+            # Scaled by bottom fighter's OWN bjj+athleticism (ability to be active
+            # and defend from bottom), not by the opponent's wrestling dominance.
+            bot_grappling = bot.bjj * 0.5 + bot.athleticism * 0.5
+            resistance_rate = GROUND_RESISTANCE_BASE * _logistic_abs(bot_grappling)
             score_bot = resistance_rate * ticks
 
             # Striking pressure: G&P output x bottom's chin vulnerability.

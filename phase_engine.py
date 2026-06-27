@@ -181,6 +181,8 @@ def simulate_round(
     fighter_b: Fighter,
     *,
     initial_phase: Phase = Phase.STANDING,
+    initial_stamina_a: float = MAX_STAMINA,
+    initial_stamina_b: float = MAX_STAMINA,
 ) -> RoundTimeline:
     """
     Simulate one 5-minute round's phase timeline for two fighters.
@@ -189,10 +191,14 @@ def simulate_round(
     GROUND phase tracks top/bottom position: only the bottom fighter can
     initiate a SCRAMBLE attempt; the top fighter's attributes serve as defense.
     Returns time in each phase and the full attempt log. No damage or scoring.
+
+    initial_stamina_a/b: starting stamina for each fighter this round.
+    Defaults to MAX_STAMINA (fresh fighters); pass lower values from
+    fatigue.FatigueState.stamina_start for cross-round carryover.
     """
     phase     = initial_phase
-    stamina_a = MAX_STAMINA
-    stamina_b = MAX_STAMINA
+    stamina_a = initial_stamina_a
+    stamina_b = initial_stamina_b
 
     # Top/bottom position in GROUND. Set when a takedown or clinch-to-ground
     # succeeds (attacker = top, defender = bottom). None outside of GROUND.
