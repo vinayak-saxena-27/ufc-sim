@@ -112,10 +112,11 @@ class TransitionAttempt:
 
 @dataclass
 class RoundTimeline:
-    time_in_phase: dict[str, float]   # phase name -> seconds spent in that phase
-    attempts:      list[TransitionAttempt]
-    end_stamina_a: float              # remaining stamina for future cross-round use
-    end_stamina_b: float
+    time_in_phase:   dict[str, float]   # phase name -> seconds spent in that phase
+    attempts:        list[TransitionAttempt]
+    end_stamina_a:   float              # remaining stamina for future cross-round use
+    end_stamina_b:   float
+    ticks_per_round: int = TICKS_PER_ROUND   # actual tick count this round ran for
 
 
 # ─── Contest helpers ──────────────────────────────────────────────────────────
@@ -183,9 +184,10 @@ def simulate_round(
     initial_phase: Phase = Phase.STANDING,
     initial_stamina_a: float = MAX_STAMINA,
     initial_stamina_b: float = MAX_STAMINA,
+    ticks_per_round: int = TICKS_PER_ROUND,
 ) -> RoundTimeline:
     """
-    Simulate one 5-minute round's phase timeline for two fighters.
+    Simulate one round's phase timeline for two fighters.
 
     Phase emerges from contested transition attempts on sub-attribute vectors.
     GROUND phase tracks top/bottom position: only the bottom fighter can
@@ -195,6 +197,9 @@ def simulate_round(
     initial_stamina_a/b: starting stamina for each fighter this round.
     Defaults to MAX_STAMINA (fresh fighters); pass lower values from
     fatigue.FatigueState.stamina_start for cross-round carryover.
+
+    ticks_per_round: total simulation ticks (ROUND_SECONDS // TICK_SECONDS by
+    default = 60 for 5-min rounds; pass 36 for 3-min Amateur rounds).
     """
     phase     = initial_phase
     stamina_a = initial_stamina_a
@@ -210,7 +215,7 @@ def simulate_round(
     time_in_phase: dict[str, float] = {p.value: 0.0 for p in Phase}
     attempts: list[TransitionAttempt] = []
 
-    for tick in range(TICKS_PER_ROUND):
+    for tick in range(ticks_per_round):
         time_in_phase[phase.value] += TICK_SECONDS
 
         # Each candidate is (attacker, defender, TransitionType, p_success).
@@ -276,10 +281,11 @@ def simulate_round(
             phase = new_phase
 
     return RoundTimeline(
-        time_in_phase = time_in_phase,
-        attempts      = attempts,
-        end_stamina_a = stamina_a,
-        end_stamina_b = stamina_b,
+        time_in_phase   = time_in_phase,
+        attempts        = attempts,
+        end_stamina_a   = stamina_a,
+        end_stamina_b   = stamina_b,
+        ticks_per_round = ticks_per_round,
     )
 
 

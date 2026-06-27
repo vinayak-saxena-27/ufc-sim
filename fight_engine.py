@@ -20,7 +20,8 @@ import random
 from dataclasses import dataclass
 
 from fighter import Fighter
-from phase_engine import Phase, simulate_round
+from phase_engine import Phase, simulate_round, TICKS_PER_ROUND, TICK_SECONDS
+from tiers import TIER_RULESET
 from phase_output import compute_round_output
 from finish_check import FinishEvent, check_finish
 from fatigue import FatigueState, fresh_fatigue, apply_fatigue_to_fighter, update_fatigue
@@ -77,6 +78,7 @@ def _run_round(
     *,
     prior_sub_a: float = 0.0,
     prior_sub_b: float = 0.0,
+    ticks_per_round: int = TICKS_PER_ROUND,
 ) -> tuple[RoundResult, FinishEvent | None, float, float]:
     """
     Run one round through the full 4a -> 4b -> finish-check pipeline.
@@ -98,6 +100,7 @@ def _run_round(
         initial_phase     = Phase.STANDING,
         initial_stamina_a = fat_a.stamina_start,
         initial_stamina_b = fat_b.stamina_start,
+        ticks_per_round   = ticks_per_round,
     )
 
     # 4b: per-segment scoring + finish-pressure (uses fatigued chin attribute).
@@ -144,21 +147,43 @@ def simulate_full_fight(
     fb: Fighter,
     *,
     is_title: bool = False,
+    tier: str | None = None,
 ) -> FightOutcome:
     """
     Simulate a complete fight between two fighters.
 
-    Runs up to ROUNDS_TITLE (5) or ROUNDS_STANDARD (3) rounds.  A finish
-    anywhere in any round exits early.  If all rounds complete, the decision
-    goes to cumulative round scores.  Exact score ties are broken by coin flip
-    (floating-point ties are astronomically rare with this engine).
+    Derives round count and round length from TIER_RULESET[tier].  If tier is
+    None, falls back to fa.tier.  Unknown tier keys (e.g. test fixtures) fall
+    back to ROUNDS_STANDARD / TICKS_PER_ROUND.
+
+    A finish anywhere in any round exits early.  If all rounds complete, the
+    decision goes to cumulative round scores.  Exact score ties are broken by
+    coin flip (floating-point ties are astronomically rare with this engine).
+
+    Raises ValueError if is_title=True for a tier whose title_rounds is None.
 
     The fighters are NOT mutated; fatigue and fight_history recording is the
     caller's responsibility (simulate_fight() in fight.py handles recording).
     """
-    n_rounds   = ROUNDS_TITLE if is_title else ROUNDS_STANDARD
-    fat_a      = fresh_fatigue()
-    fat_b      = fresh_fatigue()
+    tier_key = tier if tier is not None else fa.tier
+    ruleset  = TIER_RULESET.get(tier_key)
+
+    if ruleset is None:
+        n_rounds        = ROUNDS_TITLE if is_title else ROUNDS_STANDARD
+        ticks_per_round = TICKS_PER_ROUND
+    elif is_title:
+        if ruleset.title_rounds is None:
+            raise ValueError(
+                f"Tier '{tier_key}' has no title fight format (title_rounds is None)"
+            )
+        n_rounds        = ruleset.title_rounds
+        ticks_per_round = ruleset.round_seconds // TICK_SECONDS
+    else:
+        n_rounds        = ruleset.non_title_rounds
+        ticks_per_round = ruleset.round_seconds // TICK_SECONDS
+
+    fat_a   = fresh_fatigue()
+    fat_b   = fresh_fatigue()
     results: list[RoundResult] = []
 
     # Sub pressure accumulated from prior rounds, decayed by SUB_PRESSURE_ROUND_DECAY
@@ -172,6 +197,7 @@ def simulate_full_fight(
             fa, fb, fat_a, fat_b, rnd,
             prior_sub_a=carry_sub_a,
             prior_sub_b=carry_sub_b,
+            ticks_per_round=ticks_per_round,
         )
         results.append(result)
 

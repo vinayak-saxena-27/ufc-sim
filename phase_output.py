@@ -21,7 +21,7 @@ import math
 from dataclasses import dataclass
 
 from fighter import Fighter
-from phase_engine import Phase, RoundTimeline, TICKS_PER_ROUND
+from phase_engine import Phase, RoundTimeline
 from fight import SCALE
 
 # Must match phase_engine.py -- kept local for module self-containment.
@@ -158,8 +158,8 @@ def _reconstruct_segments(
         cur_phase = att.phase_to
         seg_start = seg_end
 
-    if seg_start < TICKS_PER_ROUND:
-        segs.append((seg_start, TICKS_PER_ROUND, cur_phase, cur_top))
+    if seg_start < timeline.ticks_per_round:
+        segs.append((seg_start, timeline.ticks_per_round, cur_phase, cur_top))
 
     return segs
 
