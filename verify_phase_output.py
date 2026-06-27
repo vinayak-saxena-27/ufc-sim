@@ -12,11 +12,15 @@ so the phase/position/timing is fully controlled -- no reliance on random simula
 """
 from __future__ import annotations
 
+import sys
+
 from fighter import Fighter
 from phase_engine import (
     Phase, TransitionType, TransitionAttempt, RoundTimeline,
 )
 from phase_output import compute_round_output, RoundOutput
+
+_failures: list[str] = []
 
 
 # ─── Shared helpers ───────────────────────────────────────────────────────────
@@ -65,11 +69,14 @@ def _show(label: str, out: RoundOutput, fa_name: str, fb_name: str) -> None:
           f"  dom={out.total_dominance_b:>6.2f}")
 
 
-def chk(label: str, actual: float, lo: float, hi: float) -> None:
+def chk(label: str, actual: float, lo: float, hi: float) -> bool:
     ok     = lo <= actual <= hi
     status = "PASS" if ok else "FAIL"
     hi_str = "inf" if hi > 9000 else f"{hi:.2f}"
     print(f"    [{status}]  {label:<48}  {actual:.4f}  (want {lo:.2f}--{hi_str})")
+    if not ok:
+        _failures.append(label)
+    return ok
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -82,9 +89,10 @@ def chk(label: str, actual: float, lo: float, hi: float) -> None:
 # large (GROUND_PASSIVE_RATE * logistic(wrestling_gap)).
 #
 # Expected (pre-calculated):
-#   total_score_a   ~= 62.1   (passive dominance across 60 ticks, recency-weighted)
+#   total_score_a   ~= 26.1   (passive dominance: 0.25 * logistic(55) * 60 ticks * rw=1.804)
 #   strike_pressure ~= 0.019  (near-zero: terrible boxer / no power)
 #   sub_pressure    ~= 0.188  (near-zero: terrible bjj)
+# Neutral case (gap=0): score ~= 13.5; threshold confirms active wrestling advantage > 60% higher.
 # ─────────────────────────────────────────────────────────────────────────────
 print()
 print("=" * 72)
@@ -106,8 +114,8 @@ out1 = compute_round_output(
 print()
 _show("passive_wrestler (top) vs victim (bottom)", out1, passive_wres.name, victim.name)
 print()
-chk("score_a  > 30.0  (high: passive positional dominance)",
-    out1.total_score_a,             30.0, 9999.0)
+chk("score_a  > 22.0  (high: passive positional dominance)",
+    out1.total_score_a,             22.0, 9999.0)
 chk("strike_p < 2.0   (low: no boxing/power weapons)",
     out1.total_strike_pressure_a,    0.0, 2.0)
 chk("sub_p    < 2.0   (low: no bjj weapons)",
@@ -301,9 +309,14 @@ print(f"    Timeline A  late GROUND  [40,60): {score_A:.3f}")
 print(f"    Timeline B  early GROUND  [0,20): {score_B:.3f}")
 print(f"    Late / early ratio:               {ratio:.3f}x")
 print()
-if ratio > 1.0:
-    print("    [PASS]  Late-round GROUND scores higher -- recency weighting confirmed")
-elif abs(ratio - 1.0) < 0.01:
-    print("    [NOTE]  Scores nearly equal -- check RECENCY_DECAY constant")
+chk("Late GROUND scores higher than early (recency weighting)", ratio, 1.0, 9999.0)
+
+if failures := _failures:
+    print()
+    print(f"FAILED ({len(failures)} check(s)):")
+    for f in failures:
+        print(f"  - {f}")
+    sys.exit(1)
 else:
-    print("    [FAIL]  Early GROUND scored higher than late -- recency logic inverted")
+    print()
+    print("All checks passed.")

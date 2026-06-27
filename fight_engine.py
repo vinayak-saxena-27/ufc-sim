@@ -60,6 +60,8 @@ class FightOutcome:
     """Complete result of a simulated fight."""
     winner_name:    str
     loser_name:     str
+    winner_id:      str             # stable fighter_id — use this, not name, for identity checks
+    loser_id:       str
     method:         str             # "KO/TKO", "submission", or "decision"
     round_finished: int | None      # None for decisions; round number otherwise
     total_score_a:  float           # cumulative score across all completed/partial rounds
@@ -103,8 +105,11 @@ def _run_round(
         ticks_per_round   = ticks_per_round,
     )
 
-    # 4b: per-segment scoring + finish-pressure (uses fatigued chin attribute).
-    round_out = compute_round_output(timeline, fa_eff, fb_eff)
+    # 4b: per-segment scoring + finish-pressure.
+    # fa_eff/fb_eff carry the fatigued chin (correct for striking defense).
+    # fa/fb passed as fa_raw/fb_raw so GROUND offensive wrestling reads (passive_rate_top,
+    # sub_off) use the unpenalized values -- preserving the offense/defense asymmetry.
+    round_out = compute_round_output(timeline, fa_eff, fb_eff, fa_raw=fa, fb_raw=fb)
 
     # Incremental finish check: break at the first segment that crosses a threshold.
     # Sub pressure carry-over from prior rounds is included via prior_sub_a/b.
@@ -113,6 +118,7 @@ def _run_round(
     for seg in round_out.segments:
         accumulated.append(seg)
         finish = check_finish(accumulated, fa.name, fb.name,
+                              fa_id=fa.fighter_id, fb_id=fb.fighter_id,
                               prior_sub_a=prior_sub_a, prior_sub_b=prior_sub_b)
         if finish:
             break
@@ -205,6 +211,8 @@ def simulate_full_fight(
             return FightOutcome(
                 winner_name    = finish.winner_name,
                 loser_name     = finish.loser_name,
+                winner_id      = finish.winner_id or finish.winner_name,
+                loser_id       = finish.loser_id  or finish.loser_name,
                 method         = finish.method,
                 round_finished = rnd,
                 total_score_a  = sum(r.score_a for r in results),
@@ -223,19 +231,18 @@ def simulate_full_fight(
     total_b = sum(r.score_b for r in results)
 
     if total_a > total_b:
-        winner_name, loser_name = fa.name, fb.name
+        winner, loser = fa, fb
     elif total_b > total_a:
-        winner_name, loser_name = fb.name, fa.name
+        winner, loser = fb, fa
     else:
         # Exact tie (astronomically rare); coin flip.
-        if random.random() < 0.5:
-            winner_name, loser_name = fa.name, fb.name
-        else:
-            winner_name, loser_name = fb.name, fa.name
+        winner, loser = (fa, fb) if random.random() < 0.5 else (fb, fa)
 
     return FightOutcome(
-        winner_name    = winner_name,
-        loser_name     = loser_name,
+        winner_name    = winner.name,
+        loser_name     = loser.name,
+        winner_id      = winner.fighter_id,
+        loser_id       = loser.fighter_id,
         method         = "decision",
         round_finished = None,
         total_score_a  = total_a,

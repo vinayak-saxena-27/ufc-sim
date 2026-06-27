@@ -300,8 +300,10 @@ for label, ok in checks.items():
     if not ok:
         all_pass = False
 
+import sys as _sys
 if all_pass:
     print("\nAll checks pass.")
+    _sys.exit(0)
 else:
     print()
     print("FINDINGS  (stop here -- diagnose before patching the engine)")
@@ -323,3 +325,4 @@ else:
     if not p_3d:
         print(f"  [3d] Strong wrestler success rate ({wr_sr:.0%}) not above close fighter ({ca_sr:.0%}).")
         print(f"       This would indicate the gap-based tendency modifier is not working.")
+    _sys.exit(1)

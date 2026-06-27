@@ -88,7 +88,7 @@ def sim_batch(fa: Fighter, pool: list[Fighter], n: int) -> dict:
         fb      = random.choice(pool)
         outcome = simulate_full_fight(fa, fb)
 
-        if outcome.winner_name == fa.name:
+        if outcome.winner_id == fa.fighter_id:
             wins_a += 1
 
         if outcome.method == "KO/TKO":
@@ -605,3 +605,11 @@ print(f"  Test 4 (finish rate): {r_mix['finish_rate']:.1%}"
 print()
 print(f"  Test 5 (pos dominance): {'finished (unexpected)' if fight_finished else 'decision win, low finish pressure'}")
 print()
+
+import sys as _sys
+_all_pass = (
+    calibration_ok
+    and t4_pass
+    and (t5_pass if not fight_finished else False)
+)
+_sys.exit(0 if _all_pass else 1)

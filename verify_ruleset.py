@@ -10,9 +10,9 @@ Four checks:
 from __future__ import annotations
 
 import random
-import sys
+import sys as _sys
 
-sys.path.insert(0, r"C:\Users\vinay\ufc-sim")
+_sys.path.insert(0, r"C:\Users\vinay\ufc-sim")
 
 from tiers import TIER_LEVELS, TIER_RULESET, TIER_CONFIG, generate_all_tiers
 from fight_engine import simulate_full_fight, TICKS_PER_ROUND, TICK_SECONDS
@@ -203,6 +203,8 @@ if failures:
     print(f"FAILED ({len(failures)} check(s)):")
     for f in failures:
         print(f"  - {f}")
+    print("=" * 60)
+    _sys.exit(1)
 else:
     print("ALL CHECKS PASSED")
-print("=" * 60)
+    print("=" * 60)

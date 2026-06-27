@@ -60,8 +60,10 @@ class FinishEvent:
     """Describes a fight stoppage."""
     winner_name:   str
     loser_name:    str
-    method:        str   # "KO/TKO" or "submission"
-    segment_index: int   # 0-indexed position within the round's segment list
+    method:        str        # "KO/TKO" or "submission"
+    segment_index: int        # 0-indexed position within the round's segment list
+    winner_id:     str | None = None   # stable fighter_id; None for legacy/test callers
+    loser_id:      str | None = None
 
 
 # ─── Core check ───────────────────────────────────────────────────────────────
@@ -71,6 +73,8 @@ def check_finish(
     fa_name:  str,
     fb_name:  str,
     *,
+    fa_id:       str | None = None,
+    fb_id:       str | None = None,
     prior_sub_a: float = 0.0,
     prior_sub_b: float = 0.0,
 ) -> FinishEvent | None:
@@ -102,20 +106,38 @@ def check_finish(
 
     # Striking finishes (KO/TKO)
     if wsp_a >= KO_TKO_THRESHOLD and wsp_b >= KO_TKO_THRESHOLD:
-        # Both crossed simultaneously -- fa wins as placeholder tiebreak
-        return FinishEvent(fa_name, fb_name, "KO/TKO", idx)
+        # Both crossed in the same segment.  Find which crossed first by interpolating
+        # within the last segment: t = (threshold - pressure_before_segment) / segment_delta.
+        # Smaller t = earlier crossing = that fighter's striking wins.
+        last    = segments[-1]
+        delta_a = last.strike_pressure_a * last.recency_weight
+        delta_b = last.strike_pressure_b * last.recency_weight
+        t_a = (KO_TKO_THRESHOLD - (wsp_a - delta_a)) / delta_a if delta_a > 0 else 0.0
+        t_b = (KO_TKO_THRESHOLD - (wsp_b - delta_b)) / delta_b if delta_b > 0 else 0.0
+        if t_a <= t_b:
+            return FinishEvent(fa_name, fb_name, "KO/TKO", idx, fa_id, fb_id)
+        else:
+            return FinishEvent(fb_name, fa_name, "KO/TKO", idx, fb_id, fa_id)
     if wsp_a >= KO_TKO_THRESHOLD:
-        return FinishEvent(fa_name, fb_name, "KO/TKO", idx)
+        return FinishEvent(fa_name, fb_name, "KO/TKO", idx, fa_id, fb_id)
     if wsp_b >= KO_TKO_THRESHOLD:
-        return FinishEvent(fb_name, fa_name, "KO/TKO", idx)
+        return FinishEvent(fb_name, fa_name, "KO/TKO", idx, fb_id, fa_id)
 
     # Submission finishes
     if wsub_a >= SUBMISSION_THRESHOLD and wsub_b >= SUBMISSION_THRESHOLD:
-        return FinishEvent(fa_name, fb_name, "submission", idx)
+        last        = segments[-1]
+        delta_sub_a = last.sub_pressure_a * last.recency_weight
+        delta_sub_b = last.sub_pressure_b * last.recency_weight
+        t_a = (SUBMISSION_THRESHOLD - (wsub_a - delta_sub_a)) / delta_sub_a if delta_sub_a > 0 else 0.0
+        t_b = (SUBMISSION_THRESHOLD - (wsub_b - delta_sub_b)) / delta_sub_b if delta_sub_b > 0 else 0.0
+        if t_a <= t_b:
+            return FinishEvent(fa_name, fb_name, "submission", idx, fa_id, fb_id)
+        else:
+            return FinishEvent(fb_name, fa_name, "submission", idx, fb_id, fa_id)
     if wsub_a >= SUBMISSION_THRESHOLD:
-        return FinishEvent(fa_name, fb_name, "submission", idx)
+        return FinishEvent(fa_name, fb_name, "submission", idx, fa_id, fb_id)
     if wsub_b >= SUBMISSION_THRESHOLD:
-        return FinishEvent(fb_name, fa_name, "submission", idx)
+        return FinishEvent(fb_name, fa_name, "submission", idx, fb_id, fa_id)
 
     return None
 

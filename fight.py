@@ -60,7 +60,7 @@ def simulate_fight(
     from fight_engine import simulate_full_fight
 
     outcome = simulate_full_fight(fighter_a, fighter_b, is_title=is_title)
-    winner  = fighter_a if outcome.winner_name == fighter_a.name else fighter_b
+    winner  = fighter_a if outcome.winner_id == fighter_a.fighter_id else fighter_b
     loser   = fighter_b if winner is fighter_a else fighter_a
 
     winner.fight_history.append(FightResult(

@@ -81,7 +81,7 @@ class SegmentOutput:
     phase:             str
     start_tick:        int
     end_tick:          int          # exclusive; segment covers [start_tick, end_tick)
-    ground_top_name:   str | None   # fighter name on top; None outside GROUND
+    ground_top_name:   str | None   # fighter name on top (display); None outside GROUND
     recency_weight:    float        # exp(RECENCY_DECAY * mid_tick) for round-score
 
     # Round-score effectiveness (passive position + active output; feeds judging)
@@ -99,6 +99,9 @@ class SegmentOutput:
     # GROUND-top dominance accrual this segment (0 for non-top / non-GROUND)
     dominance_a:       float
     dominance_b:       float
+
+    # Stable ID of the fighter on top in GROUND (None outside GROUND or for legacy callers)
+    ground_top_id:     str | None = None
 
 
 @dataclass
@@ -132,34 +135,43 @@ def _reconstruct_segments(
     timeline: RoundTimeline,
     initial_phase: Phase,
     initial_ground_top: str | None,
-) -> list[tuple[int, int, Phase, str | None]]:
+    initial_ground_top_id: str | None = None,
+) -> list[tuple[int, int, Phase, str | None, str | None]]:
     """
     Replay the attempt log to recover contiguous phase segments.
 
-    Returns list of (start_tick, end_tick_exclusive, phase, ground_top_name).
+    Returns list of (start_tick, end_tick_exclusive, phase, ground_top_name, ground_top_id).
+    ground_top_id is the stable fighter_id of the top fighter (None outside GROUND or when
+    TransitionAttempt.attacker_id was not populated, e.g. synthetic test timelines).
 
     Tick mechanics (from simulate_round):
       time_in_phase[phase] += TICK_SECONDS BEFORE the attempt resolves.
       So tick t is the LAST tick in the old phase; tick t+1 begins the new phase.
       Segment [start, tick+1) is in old phase; new segment starts at tick+1.
     """
-    segs: list[tuple[int, int, Phase, str | None]] = []
-    cur_phase = initial_phase
-    cur_top   = initial_ground_top
-    seg_start = 0
+    segs: list[tuple[int, int, Phase, str | None, str | None]] = []
+    cur_phase    = initial_phase
+    cur_top      = initial_ground_top
+    cur_top_id   = initial_ground_top_id
+    seg_start    = 0
 
     for att in timeline.attempts:
         if not att.success:
             continue
         seg_end = att.tick + 1  # tick att.tick is last tick of old phase
         if seg_end > seg_start:
-            segs.append((seg_start, seg_end, cur_phase, cur_top))
-        cur_top   = att.attacker_name if att.phase_to == Phase.GROUND else None
+            segs.append((seg_start, seg_end, cur_phase, cur_top, cur_top_id))
+        if att.phase_to == Phase.GROUND:
+            cur_top    = att.attacker_name
+            cur_top_id = att.attacker_id
+        else:
+            cur_top    = None
+            cur_top_id = None
         cur_phase = att.phase_to
         seg_start = seg_end
 
     if seg_start < timeline.ticks_per_round:
-        segs.append((seg_start, timeline.ticks_per_round, cur_phase, cur_top))
+        segs.append((seg_start, timeline.ticks_per_round, cur_phase, cur_top, cur_top_id))
 
     return segs
 
@@ -175,7 +187,13 @@ def _compute_segment(
     fb: Fighter,
     eff_chin_a: float,
     eff_chin_b: float,
+    ground_top_id: str | None = None,
+    fa_raw: Fighter | None = None,
+    fb_raw: Fighter | None = None,
 ) -> SegmentOutput:
+    # fa/fb carry fatigue penalties (correct for defensive and chin use).
+    # fa_raw/fb_raw are the unpenalized originals; used only for the top fighter's
+    # OFFENSIVE wrestling reads (passive_rate_top, sub_off) where fatigue must not apply.
     ticks    = end - start
     mid_tick = (start + end - 1) / 2.0
     rw       = math.exp(RECENCY_DECAY * mid_tick)
@@ -228,12 +246,21 @@ def _compute_segment(
             # Defensive fallback -- should not occur in well-formed timeline.
             score_a = score_b = 0.05 * ticks
         else:
-            top      = fa if ground_top_name == fa.name else fb
-            bot      = fb if top is fa else fa
-            is_a_top = (top is fa)
+            if ground_top_id is not None:
+                is_a_top = (ground_top_id == fa.fighter_id)
+            else:
+                is_a_top = (ground_top_name == fa.name)
+            top      = fa if is_a_top else fb       # fatigued copy (correct for defensive attrs)
+            bot      = fb if is_a_top else fa        # fatigued copy (defensive wrestling / chin)
             eff_chin_bot = eff_chin_b if is_a_top else eff_chin_a
 
-            wrestling_gap = top.wrestling - bot.wrestling
+            # Raw (non-fatigued) top: for OFFENSIVE wrestling reads only.
+            # bot stays fatigued throughout -- its wrestling is used defensively.
+            top_raw  = (fa_raw or fa) if is_a_top else (fb_raw or fb)
+
+            # wrestling_gap: top's offensive control skill (raw) vs bot's defensive
+            # wrestling (fatigued) -- the correct asymmetric split.
+            wrestling_gap = top_raw.wrestling - bot.wrestling
 
             # --- TOP fighter: passive positional dominance ---
             # High even with zero active work -- this is the "controls the round
@@ -242,12 +269,14 @@ def _compute_segment(
             passive_rate_top = GROUND_PASSIVE_RATE * _logistic(wrestling_gap)
 
             # --- TOP fighter: G&P (active, contributes to both tracks) ---
+            # boxing/power are unchanged by fatigue; top (fatigued) == top_raw here.
             gnp_off = top.boxing * 0.4 + top.power * 0.5
             gnp_def = bot.wrestling * 0.5 + bot.athleticism * 0.3 + bot.bjj * 0.2
             gnp_rate = BASE_GNP_RATE * _logistic_abs(gnp_off) * _logistic(gnp_off - gnp_def)
 
             # --- TOP fighter: submission attempts (active, no fatigue hook) ---
-            sub_off = top.bjj * 0.8 + top.wrestling * 0.2
+            # Wrestling here is OFFENSIVE top-control skill; use raw value.
+            sub_off = top_raw.bjj * 0.8 + top_raw.wrestling * 0.2
             sub_def = bot.bjj * 0.8 + bot.athleticism * 0.2
             sub_rate = BASE_SUB_RATE * _logistic_abs(sub_off) * _logistic(sub_off - sub_def)
 
@@ -297,6 +326,7 @@ def _compute_segment(
         sub_pressure_b    = sub_b,
         dominance_a       = dom_a,
         dominance_b       = dom_b,
+        ground_top_id     = ground_top_id,
     )
 
 
@@ -309,27 +339,39 @@ def compute_round_output(
     *,
     initial_phase: Phase = Phase.STANDING,
     initial_ground_top_name: str | None = None,
+    initial_ground_top_id:   str | None = None,
+    fa_raw: Fighter | None = None,
+    fb_raw: Fighter | None = None,
 ) -> RoundOutput:
     """
     Consume a RoundTimeline and produce per-segment scoring + finish-pressure.
 
     Fighter A = fa (positional in simulate_round), Fighter B = fb.
-    initial_ground_top_name: only needed if initial_phase == Phase.GROUND.
+    initial_ground_top_name / initial_ground_top_id: only needed if
+    initial_phase == Phase.GROUND. ID takes precedence over name for resolution.
+
+    fa_raw / fb_raw: unpenalized (non-fatigued) originals of fa/fb.  When provided,
+    GROUND offensive wrestling reads (passive_rate_top, sub_off) use these instead of
+    the fatigued copies, preserving the offense/defense fatigue asymmetry.  Callers
+    without fatigue state (tests, __main__) can omit these and fa/fb are used for both.
     """
     eff_chin_a = _effective_chin(fa)
     eff_chin_b = _effective_chin(fb)
 
     # Resolve initial ground-top: if starting in GROUND with no top specified,
     # match phase_engine.py's placeholder (fa is top).
-    top0 = initial_ground_top_name
+    top0    = initial_ground_top_name
+    top0_id = initial_ground_top_id
     if initial_phase == Phase.GROUND and top0 is None:
-        top0 = fa.name
+        top0    = fa.name
+        top0_id = fa.fighter_id
 
-    raw = _reconstruct_segments(timeline, initial_phase, top0)
+    raw = _reconstruct_segments(timeline, initial_phase, top0, top0_id)
 
     segments = [
-        _compute_segment(ph, s, e, gtn, fa, fb, eff_chin_a, eff_chin_b)
-        for s, e, ph, gtn in raw
+        _compute_segment(ph, s, e, gtn, fa, fb, eff_chin_a, eff_chin_b, gti,
+                         fa_raw=fa_raw, fb_raw=fb_raw)
+        for s, e, ph, gtn, gti in raw
     ]
 
     # Round-score uses recency weighting; pressure is raw cumulative.

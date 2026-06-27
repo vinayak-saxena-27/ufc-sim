@@ -108,6 +108,7 @@ class TransitionAttempt:
     attacker_name: str
     success:       bool
     stamina_cost:  float
+    attacker_id:   str | None = None   # stable fighter_id; None for legacy/test callers
 
 
 @dataclass
@@ -266,6 +267,7 @@ def simulate_round(
             phase_to      = _TRANSITION_DEST[trans],
             transition    = trans,
             attacker_name = attacker.name,
+            attacker_id   = attacker.fighter_id,
             success       = success,
             stamina_cost  = cost,
         ))

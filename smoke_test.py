@@ -163,9 +163,15 @@ print(f"    underdog rate: {rate_upset:.1%}   want 14-28%")
 print()
 
 
-def _check(label: str, actual: float, lo: float, hi: float) -> None:
-    status = "PASS" if lo <= actual <= hi else "FAIL"
+_smoke_failures: list[str] = []
+
+def _check(label: str, actual: float, lo: float, hi: float) -> bool:
+    ok     = lo <= actual <= hi
+    status = "PASS" if ok else "FAIL"
     print(f"  [{status}]  {label:<40}  {actual:.1%}  (want {lo:.0%}-{hi:.0%})")
+    if not ok:
+        _smoke_failures.append(label)
+    return ok
 
 
 print("PASS / FAIL SUMMARY")
@@ -255,3 +261,6 @@ for rank, f in enumerate(active[:40], 1):
     ))
 if len(active) > 40:
     print(f"  ... ({len(active) - 40} more fighters competed)")
+
+import sys as _sys
+_sys.exit(1 if _smoke_failures else 0)
