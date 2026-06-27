@@ -5,7 +5,8 @@ from dataclasses import dataclass
 from statistics import mean as _mean
 
 from fighter import Fighter
-from templates import TEMPLATES, _random_name, _TEMPLATE_REGIONS, _sample_hype
+from templates import TEMPLATES, _TEMPLATE_REGIONS, _sample_hype
+from academies import pick_academy, regional_name, reset_name_registry
 
 # ─── Tuning constants ─────────────────────────────────────────────────────────
 # Per-attribute noise added on top of the template shape offset.
@@ -114,20 +115,23 @@ def generate_tier_fighter(template_name: str, tier_key: str, weight_class: str =
 
     # relative_offset = how far each attr sits above/below the template's natural overall.
     # Adding it to target_overall re-centers the template shape at the tier's power level.
+    # Academy nudge shifts individual attribute centers without changing tier power target.
+    academy = pick_academy(template_name)
     attrs = {
-        attr: target_overall + (tmpl_mean - natural_ovr) + random.gauss(0.0, ATTR_NOISE_STD)
+        attr: target_overall + (tmpl_mean - natural_ovr) + academy.get_nudge(attr) + random.gauss(0.0, ATTR_NOISE_STD)
         for attr, (tmpl_mean, _) in cfg.items()
     }
 
     age = max(18, min(42, int(random.gauss(27.0, 4.0))))
     return Fighter(
-        name=_random_name(),
+        name=regional_name(template_name),
         age=age,
         region=_TEMPLATE_REGIONS[template_name],
         template=template_name,
         tier=tier_key,
         weight_class=weight_class,
-        hype=_sample_hype(attrs["power"], attrs["athleticism"]),
+        academy=academy.name,
+        hype=_sample_hype(attrs["power"], attrs["athleticism"]) + academy.pipeline_strength,
         **attrs,
     )
 
@@ -147,6 +151,7 @@ def generate_all_tiers(
     scale:          multiplier on TIER_POPULATION defaults.
     weight_classes: defaults to WEIGHT_CLASSES (lightweight/welterweight/heavyweight).
     """
+    reset_name_registry()
     if weight_classes is None:
         weight_classes = WEIGHT_CLASSES
     if per_tier is None:

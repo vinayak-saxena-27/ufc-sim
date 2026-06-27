@@ -3,35 +3,7 @@ from __future__ import annotations
 import random
 
 from fighter import Fighter
-
-# ─── Name pool ────────────────────────────────────────────────────────────────
-# Not region-accurate yet — placeholder until fighter nationality/locale matters.
-# A future session can swap this for locale-aware name generation per template.
-_FIRST_NAMES = [
-    "Ivan", "Dmitri", "Ruslan", "Magomed", "Umar", "Islam", "Akhmat", "Zurab",
-    "Shamil", "Zalim", "Hajji", "Khabib",
-    "Joao", "Carlos", "Anderson", "Rafael", "Felipe", "Lucas", "Mauricio", "Gabriel",
-    "Fabricio", "Rodrigo",
-    "Marcus", "Tyrone", "Derek", "Dustin", "Justin", "Tony", "Colby", "Gilbert",
-    "Sean", "Cory", "Brandon", "Marlon",
-    "Chaiyaphum", "Somrak", "Yodchai", "Lerdsila", "Buakaw", "Sangmanee",
-    "Jorge", "Yair", "Diego", "Alejandro", "Eryk", "Stipe", "Jiri", "Alex",
-    "Max", "Michael", "Robert", "Israel", "Jan", "Beneil", "Nate", "Nick",
-]
-
-_LAST_NAMES = [
-    "Petrov", "Makhachev", "Guseinov", "Khasbulaev", "Kovalev", "Ankalaev",
-    "Ulanbekov", "Chimaev", "Nurmagomedov",
-    "Silva", "Santos", "Barboza", "Lopes", "Oliveira", "Nogueira", "Aldo",
-    "Johnson", "Williams", "Davis", "Allen", "Brown", "Carter", "Thompson",
-    "Cannonier", "Poirier", "Holloway",
-    "Rodriguez", "Romero", "Volkanovski", "Topuria", "Prochazka", "Pereira",
-    "Adesanya", "Sterling", "Gaethje", "Yan", "Blachowicz",
-]
-
-
-def _random_name() -> str:
-    return f"{random.choice(_FIRST_NAMES)} {random.choice(_LAST_NAMES)}"
+from academies import pick_academy, regional_name, reset_name_registry
 
 
 # ─── Template config ──────────────────────────────────────────────────────────
@@ -139,21 +111,27 @@ def _sample_hype(power: float, athleticism: float) -> float:
 
 def generate_fighter(template_name: str) -> Fighter:
     """Samples one fighter from the given template distribution."""
+    academy = pick_academy(template_name)
     cfg = TEMPLATES[template_name]
-    attrs = {attr: random.gauss(mean, std) for attr, (mean, std) in cfg.items()}
+    attrs = {
+        attr: random.gauss(mean + academy.get_nudge(attr), std)
+        for attr, (mean, std) in cfg.items()
+    }
     age = max(18, min(42, int(random.gauss(27.0, 4.0))))
     return Fighter(
-        name=_random_name(),
+        name=regional_name(template_name),
         age=age,
         region=_TEMPLATE_REGIONS[template_name],
         template=template_name,
-        hype=_sample_hype(attrs["power"], attrs["athleticism"]),
+        academy=academy.name,
+        hype=_sample_hype(attrs["power"], attrs["athleticism"]) + academy.pipeline_strength,
         **attrs,
     )
 
 
 def generate_population(per_template: int = 40) -> list[Fighter]:
     """Generates `per_template` fighters from each of the 5 templates."""
+    reset_name_registry()
     fighters: list[Fighter] = []
     for template_name in TEMPLATES:
         for _ in range(per_template):

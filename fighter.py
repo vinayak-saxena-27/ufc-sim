@@ -29,6 +29,7 @@ class Fighter:
     template: str
     tier: str = "unknown"           # current competition tier; changes on promotion/demotion
     weight_class: str = "unknown"  # "lightweight" | "welterweight" | "heavyweight"
+    academy: str = ""              # assigned training camp; set at generation, stable thereafter
     fighter_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     # HOOK: weight-class affinity per template (e.g. American Wrestling skewing Heavyweight,
     # Muay Thai/SEA skewing Lightweight) is future work — deferred to a later session so the
