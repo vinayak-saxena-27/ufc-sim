@@ -122,7 +122,19 @@ def generate_tier_fighter(template_name: str, tier_key: str, weight_class: str =
         for attr, (tmpl_mean, _) in cfg.items()
     }
 
-    age = max(18, min(42, int(random.gauss(27.0, 4.0))))
+    # Per-tier starting age: Amateur fighters are brand-new (18-23); higher tiers
+    # have earned their way up and thus skew older.  Clamps prevent extreme outliers.
+    # All are first-pass estimates; tune once realistic age distributions are observed.
+    _age_params: dict[str, tuple[float, float, int, int]] = {
+        # tier_key: (gauss_mean, gauss_std, min_clamp, max_clamp)
+        "tier0": (19.0, 1.5, 18, 23),   # Amateur:      fresh 18–23 year olds
+        "tier1": (22.0, 2.0, 18, 27),   # Regional:     early career, some experience
+        "tier2": (25.0, 2.5, 20, 31),   # Mid-major:    mid-career
+        "tier3": (28.0, 2.5, 22, 34),   # Top-org btm:  experienced, made the big show
+        "tier4": (30.0, 3.0, 23, 37),   # Elite:        peak careers, some veterans
+    }
+    _ap = _age_params.get(tier_key, (27.0, 4.0, 18, 42))
+    age = max(_ap[2], min(_ap[3], int(random.gauss(_ap[0], _ap[1]))))
     return Fighter(
         name=regional_name(template_name),
         age=age,

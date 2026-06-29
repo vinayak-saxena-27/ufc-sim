@@ -3,6 +3,7 @@ from __future__ import annotations
 import random
 
 from fighter import Fighter, FightResult
+from age import apply_age_to_fighter
 
 # ─── Tuning constants ─────────────────────────────────────────────────────────
 # Adjust these after reading smoke_test.py output.
@@ -59,22 +60,37 @@ def simulate_fight(
     """
     from fight_engine import simulate_full_fight
 
-    outcome = simulate_full_fight(fighter_a, fighter_b, is_title=is_title)
+    # Apply age modifier before entering the engine.  Returns original if in prime window.
+    # Fatigue stacks on top of this within each round inside fight_engine.py.
+    fa_eff = apply_age_to_fighter(fighter_a)
+    fb_eff = apply_age_to_fighter(fighter_b)
+
+    outcome = simulate_full_fight(fa_eff, fb_eff, is_title=is_title)
     winner  = fighter_a if outcome.winner_id == fighter_a.fighter_id else fighter_b
     loser   = fighter_b if winner is fighter_a else fighter_a
 
+    # score_margin: from each fighter's perspective (positive = their lead, negative = deficit).
+    # For finishes the scores are partial-round, but stored for completeness.
+    a_margin       = outcome.total_score_a - outcome.total_score_b
+    rounds_n       = len(outcome.rounds)
     winner.fight_history.append(FightResult(
-        opponent_name=loser.name,
-        outcome="win",
-        method=outcome.method,
-        org=org,
-        tier=winner.tier,
+        opponent_name    = loser.name,
+        outcome          = "win",
+        method           = outcome.method,
+        org              = org,
+        tier             = winner.tier,
+        score_margin     = a_margin if winner is fighter_a else -a_margin,
+        is_title         = is_title,
+        rounds_completed = rounds_n,
     ))
     loser.fight_history.append(FightResult(
-        opponent_name=winner.name,
-        outcome="loss",
-        method=outcome.method,
-        org=org,
-        tier=loser.tier,
+        opponent_name    = winner.name,
+        outcome          = "loss",
+        method           = outcome.method,
+        org              = org,
+        tier             = loser.tier,
+        score_margin     = -a_margin if loser is fighter_b else a_margin,
+        is_title         = is_title,
+        rounds_completed = rounds_n,
     ))
     return winner, loser
