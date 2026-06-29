@@ -23,6 +23,11 @@ from rich.text import Text
 from fight import simulate_fight, SCALE
 from tiers import TIER_CONFIG, TIER_LEVELS, WEIGHT_CLASSES, generate_all_tiers
 from matchmaking import pick_opponent, apply_tier_transitions
+from labels import maybe_update_labels, reset_title_registry, update_labels, get_champion_id
+from title import reset_title_scheduling, maybe_run_title_fight, get_title_history, TITLE_FIGHT_INTERVAL
+from age import maybe_advance_age
+from cuts import maybe_evaluate_cut, get_cut_log, reset_cut_registry
+from retirement import maybe_evaluate_retirement
 
 console = Console()
 
@@ -57,6 +62,9 @@ def _true_prob(ovr_a: float, ovr_b: float) -> float:
 def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
     random.seed(seed)
     pools = generate_all_tiers(scale=scale)
+    reset_title_registry()
+    reset_title_scheduling()
+    reset_cut_registry()
     all_fighters = [
         f
         for wc_pools in pools.values()
@@ -85,19 +93,45 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
 
     # ── Fight loop ────────────────────────────────────────────────────────────
     for i in range(n_fights):
+        if not all_fighters:
+            break
         a = random.choice(all_fighters)
-        b = pick_opponent(a, pools)
+        try:
+            b = pick_opponent(a, pools)
+        except IndexError:
+            # Division pool exhausted — skip this iteration rather than crash.
+            continue
+
+        # Capture tier+wc before transitions — title scheduling uses the pool
+        # where the fight took place, not where A ends up afterward.
+        fight_wc   = a.weight_class
+        fight_tier = a.tier
 
         p_a_wins = _true_prob(a.overall, b.overall)
         winner, loser = simulate_fight(a, b, org="league")
         result = winner.fight_history[-1]
 
-        # Apply tier transitions for both fighters
+        # Apply tier transitions, age advancement, label updates,
+        # retirement (checked first), then cut (skips already-retired fighters).
         transitions: dict[str, str] = {}
+        fighters_to_remove: list = []
         for fighter in (winner, loser):
             new_tier = apply_tier_transitions(fighter, pools)
             if new_tier:
                 transitions[fighter.name] = new_tier
+            maybe_advance_age(fighter)
+            maybe_update_labels(fighter)
+            removed = maybe_evaluate_retirement(fighter, pools, fight_num=i + 1)
+            if not removed:
+                removed = maybe_evaluate_cut(fighter, pools, fight_num=i + 1)
+            if removed:
+                fighters_to_remove.append(fighter)
+
+        for rf in fighters_to_remove:
+            all_fighters[:] = [f for f in all_fighters if f is not rf]
+
+        # Check whether a title fight is due in this pool.
+        maybe_run_title_fight(fight_wc, fight_tier, pools, org="league", fight_num=i + 1, all_fighters=all_fighters)
 
         if debug:
             a_won = winner is a
@@ -152,8 +186,153 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
     if debug:
         console.print("[dim]  * = underdog won[/dim]\n")
 
+    # ── Force final label recompute for all fighters ──────────────────────────
+    # maybe_update_labels fires only on multiples of LABEL_UPDATE_INTERVAL;
+    # fighters whose last fight didn't land on a multiple would have stale labels.
+    for f in all_fighters:
+        update_labels(f)
+
+    # ── Title fight history ───────────────────────────────────────────────────
+    history = get_title_history()
+    console.print()
+    console.print(Rule(f"[bold]Title Fight History[/bold]  [dim]({len(history)} bouts | 1 per {TITLE_FIGHT_INTERVAL} regular fights per pool)[/dim]"))
+    console.print()
+
+    if history:
+        th = Table(box=box.SIMPLE_HEAD, show_lines=False, padding=(0, 1))
+        th.add_column("#",       justify="right",  style="dim",          width=5)
+        th.add_column("Div",     style="dim",                            width=3)
+        th.add_column("Tier",    style="dim",                            width=10)
+        th.add_column("Winner",  no_wrap=True,     style="bold green",   min_width=22)
+        th.add_column("Loser",   no_wrap=True,     style="dim",          min_width=22)
+        th.add_column("Method",  style="cyan",                           width=11)
+        th.add_column("Rnds",    justify="right",  style="dim",          width=4)
+        th.add_column("Note",    style="yellow",                         width=7)
+
+        for rec in history:
+            note = "VACANT" if rec.was_vacant else "DEF."
+            th.add_row(
+                str(rec.fight_num),
+                _WC_SHORT.get(rec.weight_class, rec.weight_class),
+                _TIER_SHORT.get(rec.tier_key, rec.tier_key),
+                rec.winner_name,
+                rec.loser_name,
+                rec.method,
+                str(rec.rounds_completed),
+                note,
+            )
+        console.print(th)
+    else:
+        console.print("[dim]  No title fights occurred (increase --fights or lower TITLE_FIGHT_INTERVAL).[/dim]")
+
+    # ── Releases & retirements ────────────────────────────────────────────────
+    roster_events = get_cut_log()
+    n_cuts     = sum(1 for r in roster_events if r.reason == "cut")
+    n_retired  = sum(1 for r in roster_events if r.reason == "retired")
+    n_on_top   = sum(1 for r in roster_events if r.reason == "retired_on_top")
+    console.print()
+    console.print(Rule(
+        f"[bold]Releases & Retirements[/bold]  "
+        f"[dim]({n_cuts} cut  |  {n_retired} retired  |  {n_on_top} on-top)[/dim]"
+    ))
+    console.print()
+
+    if roster_events:
+        _LABEL_ABBREV = {
+            "Champion":   "C",
+            "Legend":     "L",
+            "Contender":  "cont",
+            "Prospect":   "pros",
+            "Gatekeeper": "gk",
+            "Journeyman": "jrny",
+            "Washed":     "wash",
+        }
+        _LABEL_PRIORITY_CUT = [
+            "Champion", "Legend", "Contender", "Prospect",
+            "Gatekeeper", "Journeyman", "Washed",
+        ]
+
+        def _cut_label_str(ls: frozenset[str]) -> str:
+            ordered = [_LABEL_ABBREV[lb] for lb in _LABEL_PRIORITY_CUT if lb in ls]
+            return " ".join(ordered) if ordered else "-"
+
+        def _type_str(rec) -> str:
+            if rec.reason == "retired_on_top":
+                base = "ON TOP"
+            elif rec.reason == "retired":
+                base = "RETIRED"
+            else:
+                base = "CUT"
+            return base + " (belt)" if rec.title_vacated else base
+
+        ct = Table(box=box.SIMPLE_HEAD, show_lines=False, padding=(0, 1))
+        ct.add_column("Sim#",    justify="right",  style="dim",        width=5)
+        ct.add_column("Fighter", no_wrap=True,     style="white",      width=20)
+        ct.add_column("Div",                       style="dim",        width=3)
+        ct.add_column("Tier",                      style="dim",        width=9)
+        ct.add_column("Age",     justify="right",  style="dim",        width=3)
+        ct.add_column("Rec",     justify="center", style="bold",       width=6)
+        ct.add_column("Labels",                    style="yellow",     width=12)
+        ct.add_column("Type",                      style="bold cyan",  width=12)
+
+        for rec in roster_events:
+            ct.add_row(
+                str(rec.fight_num),
+                rec.fighter_name,
+                _WC_SHORT.get(rec.weight_class, rec.weight_class),
+                _TIER_SHORT.get(rec.tier, rec.tier),
+                str(rec.age_at_event),
+                rec.record_str,
+                _cut_label_str(rec.labels_at_cut),
+                _type_str(rec),
+            )
+        console.print(ct)
+    else:
+        console.print("[dim]  No roster events during this simulation run.[/dim]")
+
+    # ── Current champions ─────────────────────────────────────────────────────
+    console.print()
+    console.print(Rule("[bold]Current Champions[/bold]"))
+    console.print()
+
+    _fighter_index = {f.fighter_id: f for f in all_fighters}
+    any_champ = False
+    for wc in WEIGHT_CLASSES:
+        for tier_key in TIER_LEVELS[1:]:   # skip tier0 (no titles)
+            champ_id = get_champion_id(wc, tier_key)
+            if champ_id:
+                champ = _fighter_index.get(champ_id)
+                name  = champ.name if champ else f"<id {champ_id[:8]}>"
+                rec   = champ.record_str if champ else "?"
+                console.print(
+                    f"  {_WC_SHORT[wc]} {_TIER_SHORT[tier_key]:<12}"
+                    f"  [bold yellow]{name}[/bold yellow]"
+                    f"  [dim]{rec}[/dim]"
+                )
+                any_champ = True
+    if not any_champ:
+        console.print("[dim]  No champions crowned yet.[/dim]")
+    console.print()
+
     # ── Standings — one table per weight class ───────────────────────────────
     active = [f for f in all_fighters if f.wins + f.losses > 0]
+
+    # Short codes for the Labels column.
+    _LABEL_BADGE: dict[str, str] = {
+        "Champion":   "[C]",
+        "Legend":     "[L]",
+        "Contender":  "cont",
+        "Prospect":   "pros",
+        "Gatekeeper": "gk",
+        "Journeyman": "jrny",
+        "Washed":     "wash",
+    }
+    _LABEL_PRIORITY = ["Champion", "Legend", "Contender", "Prospect", "Gatekeeper", "Journeyman", "Washed"]
+
+    def _label_str(f: Fighter) -> str:
+        if not f.labels:
+            return ""
+        return " ".join(_LABEL_BADGE[lb] for lb in _LABEL_PRIORITY if lb in f.labels)
 
     for wc in WEIGHT_CLASSES:
         wc_fighters = [f for f in active if f.weight_class == wc]
@@ -173,11 +352,12 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
         table = Table(box=box.SIMPLE_HEAD, show_lines=False, padding=(0, 1))
         table.add_column("#",       justify="right",  style="dim",     width=3)
         table.add_column("Fighter", no_wrap=True,     style="white",   min_width=20)
-        table.add_column("Tier",    style="dim",       width=10)
-        table.add_column("Style",   style="dim",       width=10)
+        table.add_column("Tier",    style="dim",                       width=10)
+        table.add_column("Style",   style="dim",                       width=10)
         table.add_column("Rec",     justify="center", style="bold",    width=6)
         table.add_column("Ovr",     justify="right",  style="cyan",    width=6)
         table.add_column("Hype",    justify="right",  style="magenta", width=6)
+        table.add_column("Labels",  style="yellow",                    min_width=12)
 
         for rank, f in enumerate(wc_fighters, 1):
             if f.wins > f.losses:
@@ -195,6 +375,7 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
                 f"[{rec_style}]{f.record_str}[/{rec_style}]",
                 f"{f.overall:+.1f}",
                 f"{f.hype:+.1f}",
+                _label_str(f),
             )
 
         console.print(table)
@@ -244,6 +425,33 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
     not_active = total - len(active)
     if not_active:
         console.print(f"\n[dim]  {not_active} fighters on the roster did not compete.[/dim]")
+
+    # ── Age distribution (retirement verification) ────────────────────────────
+    console.print()
+    console.print(Rule("[bold]Active Fighter Age Distribution[/bold]"))
+    console.print()
+
+    _age_brackets = [(18, 25), (26, 30), (31, 35), (36, 40), (41, 45), (46, 99)]
+    _bracket_labels = ["18-25", "26-30", "31-35", "36-40", "41-45", "46+"]
+    all_ages = [f.age for f in all_fighters]
+    if all_ages:
+        for (lo, hi), label in zip(_age_brackets, _bracket_labels):
+            count = sum(1 for a in all_ages if lo <= a <= hi)
+            bar_len = count * 50 // max(1, len(all_ages))
+            bar = "#" * bar_len
+            flag = "  ← verify no cluster here" if lo >= 46 and count > 0 else ""
+            console.print(f"  {label}:  {count:>4}  {bar}{flag}")
+        oldest = max(all_ages)
+        mean_age = sum(all_ages) / len(all_ages)
+        console.print(f"\n  Mean age: {mean_age:.1f}  |  Oldest active: {oldest}")
+        if any(a >= 46 for a in all_ages):
+            oldest_fighter = max((f for f in all_fighters), key=lambda f: f.age)
+            console.print(
+                f"  [yellow]Oldest: {oldest_fighter.name}  age {oldest_fighter.age}"
+                f"  {oldest_fighter.record_str}  {' '.join(sorted(oldest_fighter.labels)) or '(no label)'}[/yellow]"
+            )
+    else:
+        console.print("[dim]  No active fighters.[/dim]")
     console.print()
 
 

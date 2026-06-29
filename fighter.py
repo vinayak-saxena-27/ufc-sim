@@ -16,9 +16,12 @@ ATTR_NAMES: list[str] = [
 class FightResult:
     opponent_name: str
     outcome: Literal["win", "loss"]
-    method: str   # "decision", "KO/TKO", "submission" — placeholder until real engine
-    org: str      # e.g. "regional_circuit", "ufc", "bellator"
-    tier: str     # e.g. "regional", "contender", "elite" — supports tier-split record queries
+    method: str         # "decision", "KO/TKO", "submission"
+    org: str            # e.g. "regional_circuit", "ufc", "bellator"
+    tier: str           # e.g. "tier1", "tier4" — supports tier-split record queries
+    score_margin:     float = 0.0   # this fighter's total score minus opponent's; positive = winner, negative = loser
+    is_title:         bool  = False  # True if this was a title fight
+    rounds_completed: int   = 0     # how many rounds actually ran (for round-count verification)
 
 
 @dataclass
@@ -51,6 +54,7 @@ class Fighter:
     hype: float = 0.0  # Decoupled from true skill — see templates.py for generation note.
 
     fight_history: list[FightResult] = field(default_factory=list)
+    labels: set[str] = field(default_factory=set)
 
     @property
     def overall(self) -> float:
