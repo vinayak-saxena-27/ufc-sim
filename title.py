@@ -46,10 +46,10 @@ from fight import simulate_fight
 from labels import award_title, get_champion_id, maybe_update_labels
 from matchmaking import apply_tier_transitions
 from tiers import TIER_RULESET
-from age import maybe_advance_age
 from cuts import maybe_evaluate_cut
 from retirement import maybe_evaluate_retirement
 from rankings import is_eligible_vs_ranked
+from sim_calendar import get_sim_day
 
 
 # ── Tuning ────────────────────────────────────────────────────────────────────
@@ -199,7 +199,7 @@ def maybe_run_title_fight(
                 return False
             fa, fb = champ, challenger
 
-    winner, loser = simulate_fight(fa, fb, org=org, is_title=True)
+    winner, loser = simulate_fight(fa, fb, org=org, is_title=True, sim_day=get_sim_day())
 
     # award_title BEFORE tier transitions so the registry key matches the tier
     # the fight was contested at, not the tier the winner may be promoted into.
@@ -207,7 +207,6 @@ def maybe_run_title_fight(
 
     for fighter in (winner, loser):
         apply_tier_transitions(fighter, pools)
-        maybe_advance_age(fighter)
         maybe_update_labels(fighter)
         removed = maybe_evaluate_retirement(fighter, pools, fight_num)
         if not removed:

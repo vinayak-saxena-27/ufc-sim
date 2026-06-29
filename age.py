@@ -1,15 +1,24 @@
 """
 age.py — Fighter age advancement and age-performance modifier.
 
-## Age advancement
+## Age advancement (migrated to global calendar, 2026-06-29)
 
-One simulated year passes every FIGHTS_PER_SIM_YEAR of an individual
-fighter's own fights (~3 fights/year, consistent with active MMA careers).
-This is the same per-fighter fight-count cadence used by maybe_update_labels
-and the promotion/demotion checks — no new time concept introduced.
+Age now advances based on GLOBAL elapsed simulated time, not per-fighter
+fight count.  Call advance_all_ages(all_fighters) once per sim loop
+iteration, immediately after advance_sim_clock().  Every fighter ages at the
+same rate regardless of how often they compete — time passes for everyone.
 
-Call maybe_advance_age(fighter) after every fight for both winner and loser.
-It mutates fighter.age in place when the fight count crosses a year boundary.
+  SIM_DAYS_PER_YEAR = 365  (real calendar year, first-pass estimate)
+  SIM_DAYS_PER_FIGHT = 2   (from sim_calendar.py)
+  => 2 000 fights x 2 days/fight = 4 000 sim-days ~= 10.95 sim-years
+
+Correctness gain: inactive fighters now age correctly.  Under the old per-
+fight system a fighter who stopped competing never aged, making them
+permanently retirement-ineligible even at extreme ages.
+
+Old API (maybe_advance_age) is kept in this file but no longer called.  It is
+superseded by advance_all_ages() and will be removed once the migration is
+confirmed complete.
 
 ## Age-performance modifier
 
@@ -54,6 +63,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 from fighter import Fighter, ATTR_NAMES
+from sim_calendar import get_sim_day
 
 # ── Advancement cadence ───────────────────────────────────────────────────────
 
@@ -158,15 +168,52 @@ def apply_age_to_fighter(fighter: Fighter) -> Fighter:
 
 def maybe_advance_age(fighter: Fighter) -> None:
     """
-    Advance fighter.age by 1 year when their fight count crosses a FIGHTS_PER_SIM_YEAR
-    boundary.  Mutates fighter.age in place.
+    SUPERSEDED by advance_all_ages() — kept for any remaining call sites during
+    migration; will be removed once all callers are confirmed updated.
 
-    Call after every fight for both winner and loser (same call site as
-    maybe_update_labels in sim.py and title.py).
+    Old behaviour: advance fighter.age by 1 year every FIGHTS_PER_SIM_YEAR fights.
+    Correctness flaw: inactive fighters never aged.  Use advance_all_ages() instead.
     """
     n = len(fighter.fight_history)
     if n > 0 and n % FIGHTS_PER_SIM_YEAR == 0:
         fighter.age += 1
+
+
+# ── Time-based global age advancement ─────────────────────────────────────────
+
+SIM_DAYS_PER_YEAR: int = 365
+"""One simulated calendar year in sim-days.  First-pass estimate consistent with
+SIM_DAYS_PER_FIGHT=2:  365 / 2 ~= 182 fights/year per slot on average.
+Tune if career-end age distributions look wrong after long runs."""
+
+_last_age_advance_day: int = 0
+
+
+def reset_age_advancement() -> None:
+    """Reset the age-advancement clock to day 0.  Call at the start of each sim."""
+    global _last_age_advance_day
+    _last_age_advance_day = 0
+
+
+def advance_all_ages(all_fighters: list[Fighter]) -> None:
+    """Advance every fighter's age by 1 year for each SIM_DAYS_PER_YEAR elapsed
+    since the last advancement.
+
+    Call once per sim loop iteration, immediately after advance_sim_clock().
+    The while-form handles any edge case where multiple years could pass between
+    calls; under normal operation (SIM_DAYS_PER_FIGHT=2) the body fires once
+    every ~182 iterations.
+
+    Correctness property: every fighter in all_fighters ages at the same rate
+    regardless of how many fights they've had.  Inactive fighters age alongside
+    active ones — the invariant that maybe_advance_age() broke.
+    """
+    global _last_age_advance_day
+    current_day = get_sim_day()
+    while current_day - _last_age_advance_day >= SIM_DAYS_PER_YEAR:
+        for f in all_fighters:
+            f.age += 1
+        _last_age_advance_day += SIM_DAYS_PER_YEAR
 
 
 # ── Curve demo (run as __main__) ─────────────────────────────────────────────

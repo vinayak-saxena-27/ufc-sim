@@ -47,6 +47,7 @@ def simulate_fight(
     org: str = "unknown",
     *,
     is_title: bool = False,
+    sim_day: int = -1,
 ) -> tuple[Fighter, Fighter]:
     """
     Simulate one fight using the phase-based engine (4a/4b/4c).
@@ -82,6 +83,7 @@ def simulate_fight(
         score_margin     = a_margin if winner is fighter_a else -a_margin,
         is_title         = is_title,
         rounds_completed = rounds_n,
+        sim_day          = sim_day,
     ))
     loser.fight_history.append(FightResult(
         opponent_name    = winner.name,
@@ -92,5 +94,6 @@ def simulate_fight(
         score_margin     = -a_margin if loser is fighter_b else a_margin,
         is_title         = is_title,
         rounds_completed = rounds_n,
+        sim_day          = sim_day,
     ))
     return winner, loser

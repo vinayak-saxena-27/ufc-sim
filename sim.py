@@ -25,14 +25,15 @@ from tiers import TIER_CONFIG, TIER_LEVELS, WEIGHT_CLASSES, generate_all_tiers
 from matchmaking import pick_opponent, apply_tier_transitions, reset_gate_stats, get_gate_stats
 from labels import maybe_update_labels, reset_title_registry, update_labels, get_champion_id, CONTENDER
 from title import reset_title_scheduling, maybe_run_title_fight, get_title_history, TITLE_FIGHT_INTERVAL
-from age import maybe_advance_age
+from age import advance_all_ages, reset_age_advancement
 from cuts import maybe_evaluate_cut, get_cut_log, reset_cut_registry
-from retirement import maybe_evaluate_retirement
+from retirement import maybe_evaluate_retirement, maybe_retire_inactive, reset_retirement_scanning
 from rankings import (
     update_rankings, get_rankings, reset_rankings,
     RANKINGS_UPDATE_INTERVAL, RANKINGS_SIZE,
     _W_WIN_RATE, _W_QUALITY, _W_HYPE,
 )
+from sim_calendar import reset_sim_clock, advance_sim_clock, get_sim_day, SIM_DAYS_PER_FIGHT
 
 console = Console()
 
@@ -72,6 +73,9 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
     reset_cut_registry()
     reset_rankings()
     reset_gate_stats()
+    reset_sim_clock()
+    reset_age_advancement()
+    reset_retirement_scanning()
     all_fighters = [
         f
         for wc_pools in pools.values()
@@ -95,8 +99,8 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
     console.print()
 
     if debug:
-        console.print("[dim]  #   Fighter A               OvrA   Fighter B               OvrB   P(A)  Result[/dim]")
-        console.print("[dim]" + "-" * 82 + "[/dim]")
+        console.print("[dim]  #   Fighter A               OvrA   Fighter B               OvrB   P(A)  Result   Day[/dim]")
+        console.print("[dim]" + "-" * 90 + "[/dim]")
 
     # ── Fight loop ────────────────────────────────────────────────────────────
     for i in range(n_fights):
@@ -113,20 +117,21 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
         # where the fight took place, not where A ends up afterward.
         fight_wc   = a.weight_class
         fight_tier = a.tier
+        current_day = get_sim_day()
 
         p_a_wins = _true_prob(a.overall, b.overall)
-        winner, loser = simulate_fight(a, b, org="league")
+        winner, loser = simulate_fight(a, b, org="league", sim_day=current_day)
         result = winner.fight_history[-1]
 
-        # Apply tier transitions, age advancement, label updates,
+        # Apply tier transitions, label updates,
         # retirement (checked first), then cut (skips already-retired fighters).
+        # Age advancement is now global (advance_all_ages below) -- not per-fight.
         transitions: dict[str, str] = {}
         fighters_to_remove: list = []
         for fighter in (winner, loser):
             new_tier = apply_tier_transitions(fighter, pools)
             if new_tier:
                 transitions[fighter.name] = new_tier
-            maybe_advance_age(fighter)
             maybe_update_labels(fighter)
             removed = maybe_evaluate_retirement(fighter, pools, fight_num=i + 1)
             if not removed:
@@ -139,6 +144,17 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
 
         # Check whether a title fight is due in this pool.
         maybe_run_title_fight(fight_wc, fight_tier, pools, org="league", fight_num=i + 1, all_fighters=all_fighters)
+
+        # Advance the global clock after all activity for this iteration is stamped.
+        advance_sim_clock()
+
+        # Age all fighters once per SIM_DAYS_PER_YEAR — inactive fighters age too.
+        advance_all_ages(all_fighters)
+
+        # Biannual scan: retire fighters inactive for >= RETIRE_INACTIVE_GAP_DAYS.
+        newly_retired = maybe_retire_inactive(all_fighters, pools, fight_num=i + 1)
+        for rf in newly_retired:
+            all_fighters[:] = [f for f in all_fighters if f is not rf]
 
         # Recompute Elite rankings every RANKINGS_UPDATE_INTERVAL sim fights.
         if (i + 1) % RANKINGS_UPDATE_INTERVAL == 0:
@@ -158,6 +174,7 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
             line.append(outcome, style="green" if a_won else "red")
             if upset:
                 line.append(" *", style="bold yellow")
+            line.append(f"  d{current_day}", style="dim")
             console.print(line)
             continue
 
@@ -192,7 +209,7 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
             direction = "PROMOTED to" if TIER_LEVELS.index(new_tier) > old_idx else "DEMOTED to"
             body.append(f"\n  [{direction} {tier_label}]", style="bold magenta")
 
-        console.print(Panel(body, title=f"[dim]Bout {i + 1} of {n_fights}[/dim]", expand=False))
+        console.print(Panel(body, title=f"[dim]Bout {i + 1} of {n_fights} | Day {current_day}[/dim]", expand=False))
 
     if debug:
         console.print("[dim]  * = underdog won[/dim]\n")
@@ -203,6 +220,37 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
     for f in all_fighters:
         update_labels(f)
     update_rankings(pools)   # final authoritative snapshot used by all output below
+
+    # ── Calendar summary ──────────────────────────────────────────────────────
+    final_day = get_sim_day()
+    console.print()
+    console.print(Rule(f"[bold]Sim Calendar[/bold]"))
+    console.print(
+        f"  Day 0 -> Day {final_day}"
+        f"  ({final_day / 365.25:.1f} simulated years"
+        f"  |  {SIM_DAYS_PER_FIGHT} days/fight)"
+    )
+    # Sample fight dates from the 3 most-experienced fighters to confirm
+    # the calendar advances correctly (each successive fight should show a
+    # higher sim_day than the previous one for the same fighter).
+    sample_fighters = sorted(
+        [f for f in all_fighters if f.fight_history],
+        key=lambda f: len(f.fight_history),
+        reverse=True,
+    )[:3]
+    if sample_fighters:
+        console.print()
+        for sf in sample_fighters:
+            stamped = [r for r in sf.fight_history if r.sim_day >= 0]
+            if not stamped:
+                continue
+            sample = stamped[:5]
+            dates_str = "  ".join(f"d{r.sim_day}" for r in sample)
+            console.print(
+                f"  [dim]{sf.name} ({sf.record_str}):[/dim]  {dates_str}"
+                + (f"  [dim]... ({len(stamped)} total)[/dim]" if len(stamped) > 5 else "")
+            )
+    console.print()
 
     # ── Title fight history ───────────────────────────────────────────────────
     history = get_title_history()
