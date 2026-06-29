@@ -49,6 +49,7 @@ from fighter import Fighter
 from labels import WASHED, LEGEND, CHAMPION, LABEL_UPDATE_INTERVAL
 from age import _PRIME_END, apply_age_to_fighter
 from cuts import execute_removal, is_removed
+from sim_calendar import get_sim_day, days_since, _last_stamped_day
 
 
 # ── Tuning ────────────────────────────────────────────────────────────────────
@@ -150,3 +151,68 @@ def maybe_evaluate_retirement(
         execute_removal(fighter, pools, fight_num, reason)
         return True
     return False
+
+
+# ── Global inactive-fighter retirement scan ───────────────────────────────────
+# Complements maybe_evaluate_retirement (which only fires on fight-count multiples).
+# Fighters who stop competing never cross those multiples, so this periodic
+# calendar-based scan is the only path that can retire them from elapsed time alone.
+
+RETIRE_INACTIVE_SCAN_DAYS: int = 182
+"""How often (in sim-days) to scan for fighters who have gone inactive.
+~Every 91 fights at 2 days/fight -- roughly twice a simulated year."""
+
+RETIRE_INACTIVE_GAP_DAYS: int = 365
+"""A fighter whose most recent stamped fight is this many days in the past is
+considered inactive and becomes eligible for retirement evaluation."""
+
+_last_inactive_scan_day: int = 0
+
+
+def reset_retirement_scanning() -> None:
+    """Reset the inactive-scan clock to day 0.  Call at the start of each sim."""
+    global _last_inactive_scan_day
+    _last_inactive_scan_day = 0
+
+
+def maybe_retire_inactive(
+    all_fighters: list[Fighter],
+    pools:        dict[str, dict[str, list[Fighter]]],
+    fight_num:    int = 0,
+) -> list[Fighter]:
+    """Biannual scan for fighters inactive for >= RETIRE_INACTIVE_GAP_DAYS.
+
+    For each eligible fighter, runs the same three-path retirement evaluation
+    used by maybe_evaluate_retirement.  Fighters with no stamped fight history
+    are skipped (they may simply be waiting for their first match-up).
+
+    Returns the list of fighters retired during this scan so the caller can
+    remove them from all_fighters.  Pool removal and title vacancy are handled
+    internally by execute_removal() -- callers only need to clean up all_fighters.
+
+    Per-fight maybe_evaluate_retirement is NOT replaced: it continues evaluating
+    active fighters on the fight-count cadence.  This function adds the parallel
+    path for fighters who have fallen off the active schedule.
+    """
+    global _last_inactive_scan_day
+    current_day = get_sim_day()
+    if current_day - _last_inactive_scan_day < RETIRE_INACTIVE_SCAN_DAYS:
+        return []
+
+    _last_inactive_scan_day += RETIRE_INACTIVE_SCAN_DAYS
+
+    retired: list[Fighter] = []
+    for fighter in all_fighters:
+        if is_removed(fighter.fighter_id):
+            continue
+        last = _last_stamped_day(fighter)
+        if last is None:
+            continue   # no stamped history -- skip (not a stale career, just unmatched)
+        if days_since(last) < RETIRE_INACTIVE_GAP_DAYS:
+            continue   # still within the activity window
+        reason = _retirement_reason(fighter)
+        if reason:
+            execute_removal(fighter, pools, fight_num, reason)
+            retired.append(fighter)
+
+    return retired

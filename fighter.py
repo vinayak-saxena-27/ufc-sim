@@ -22,6 +22,7 @@ class FightResult:
     score_margin:     float = 0.0   # this fighter's total score minus opponent's; positive = winner, negative = loser
     is_title:         bool  = False  # True if this was a title fight
     rounds_completed: int   = 0     # how many rounds actually ran (for round-count verification)
+    sim_day:          int   = -1    # global simulated day the fight occurred; -1 = unstamped / pre-calendar
 
 
 @dataclass
