@@ -49,6 +49,7 @@ from tiers import TIER_RULESET
 from age import maybe_advance_age
 from cuts import maybe_evaluate_cut
 from retirement import maybe_evaluate_retirement
+from rankings import is_eligible_vs_ranked
 
 
 # ── Tuning ────────────────────────────────────────────────────────────────────
@@ -103,10 +104,29 @@ def _find_champion(pool: list[Fighter], champion_id: str) -> Fighter | None:
     return next((f for f in pool if f.fighter_id == champion_id), None)
 
 
-def _pick_challenger(pool: list[Fighter], champion_id: str) -> Fighter | None:
-    """Highest-overall fighter in the pool who is not the current champion."""
+def _pick_challenger(
+    pool: list[Fighter],
+    champion_id: str,
+    tier_key: str,
+) -> Fighter | None:
+    """
+    Highest-overall fighter in the pool who is not the current champion.
+
+    For tier4 (Elite) title fights the champion is always ranked, so challenger
+    must pass the ranked-opponent gate — same four conditions as regular matchmaking.
+    This prevents a freshly arrived Elite fighter from jumping straight to a
+    title shot without the normal proving period.  If the gate filters everyone
+    out (very small pool early in the sim), the gate is relaxed to avoid deadlock.
+    """
     eligible = [f for f in pool if f.fighter_id != champion_id]
-    return max(eligible, key=lambda f: f.overall) if eligible else None
+    if not eligible:
+        return None
+    if tier_key == "tier4":
+        gate_eligible = [f for f in eligible if is_eligible_vs_ranked(f)]
+        if gate_eligible:
+            eligible = gate_eligible
+        # else: pool too small / bootstrapping — allow any eligible fighter
+    return max(eligible, key=lambda f: f.overall)
 
 
 def _pick_vacant_pair(pool: list[Fighter]) -> tuple[Fighter, Fighter] | None:
@@ -174,7 +194,7 @@ def maybe_run_title_fight(
             fa, fb     = pair
             was_vacant = True
         else:
-            challenger = _pick_challenger(pool, champion_id)
+            challenger = _pick_challenger(pool, champion_id, tier_key)
             if challenger is None:
                 return False
             fa, fb = champ, challenger

@@ -5,6 +5,7 @@ import random
 from fighter import Fighter
 from tiers import TIER_LEVELS
 from academies import ACADEMY_PIPELINE
+from rankings import is_eligible_vs_ranked, get_ranked_ids
 
 # ─── Tuning constants ─────────────────────────────────────────────────────────
 # Adjust once you see promotion/demotion rates in sim output.
@@ -38,6 +39,20 @@ ELITE_DEMOTE_WINDOW:         int = 3   # shorter window specific to tier4
 # Protective matchmaking (prospect protection, gatekeeper roles, ranking position)
 # also plugs in here. For now: simple tier-pool sampling with a small cross-tier rate.
 
+# Gate statistics — how often the Elite ranked-opponent gate fires per sim run.
+_gate_enforced: int = 0   # gate applied, candidates filtered to unranked only
+_gate_fallback: int = 0   # gate would apply but no unranked candidates exist
+
+
+def reset_gate_stats() -> None:
+    global _gate_enforced, _gate_fallback
+    _gate_enforced = _gate_fallback = 0
+
+
+def get_gate_stats() -> tuple[int, int]:
+    """Returns (enforced, fallback) gate trigger counts since last reset."""
+    return _gate_enforced, _gate_fallback
+
 
 def pick_opponent(
     fighter: Fighter,
@@ -68,6 +83,25 @@ def pick_opponent(
             candidates = [f for f in pools[wc][tier] if f is not fighter]
             if candidates:
                 break
+
+    # ── Elite ranked-opponent gate (Part 1) ────────────────────────────────────
+    # A fighter matched into tier4 (Elite) who has not earned the right to face
+    # ranked opposition is restricted to unranked candidates only.
+    # Four conditions grant eligibility — see rankings.is_eligible_vs_ranked().
+    # Condition 4 (tier3-dominance fast-track) covers naturally promoted fighters;
+    # generated-at-Elite fighters must prove themselves first (conditions 1–3).
+    # If filtering leaves no candidates (very small pools early in the sim),
+    # fall back to the full candidate list rather than deadlocking.
+    if fighter.tier == "tier4" and opp_tier == "tier4" and not is_eligible_vs_ranked(fighter):
+        global _gate_enforced, _gate_fallback
+        ranked_ids = get_ranked_ids()
+        unranked_candidates = [f for f in candidates if f.fighter_id not in ranked_ids]
+        if unranked_candidates:
+            candidates = unranked_candidates
+            _gate_enforced += 1
+        else:
+            _gate_fallback += 1
+            # Pool too small to enforce gate — allow any candidate (documented fallback)
 
     return random.choice(candidates)
 

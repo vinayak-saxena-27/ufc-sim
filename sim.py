@@ -22,12 +22,17 @@ from rich.text import Text
 
 from fight import simulate_fight, SCALE
 from tiers import TIER_CONFIG, TIER_LEVELS, WEIGHT_CLASSES, generate_all_tiers
-from matchmaking import pick_opponent, apply_tier_transitions
-from labels import maybe_update_labels, reset_title_registry, update_labels, get_champion_id
+from matchmaking import pick_opponent, apply_tier_transitions, reset_gate_stats, get_gate_stats
+from labels import maybe_update_labels, reset_title_registry, update_labels, get_champion_id, CONTENDER
 from title import reset_title_scheduling, maybe_run_title_fight, get_title_history, TITLE_FIGHT_INTERVAL
 from age import maybe_advance_age
 from cuts import maybe_evaluate_cut, get_cut_log, reset_cut_registry
 from retirement import maybe_evaluate_retirement
+from rankings import (
+    update_rankings, get_rankings, reset_rankings,
+    RANKINGS_UPDATE_INTERVAL, RANKINGS_SIZE,
+    _W_WIN_RATE, _W_QUALITY, _W_HYPE,
+)
 
 console = Console()
 
@@ -65,6 +70,8 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
     reset_title_registry()
     reset_title_scheduling()
     reset_cut_registry()
+    reset_rankings()
+    reset_gate_stats()
     all_fighters = [
         f
         for wc_pools in pools.values()
@@ -133,6 +140,10 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
         # Check whether a title fight is due in this pool.
         maybe_run_title_fight(fight_wc, fight_tier, pools, org="league", fight_num=i + 1, all_fighters=all_fighters)
 
+        # Recompute Elite rankings every RANKINGS_UPDATE_INTERVAL sim fights.
+        if (i + 1) % RANKINGS_UPDATE_INTERVAL == 0:
+            update_rankings(pools)
+
         if debug:
             a_won = winner is a
             outcome = "A wins" if a_won else "B wins"
@@ -186,11 +197,12 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
     if debug:
         console.print("[dim]  * = underdog won[/dim]\n")
 
-    # ── Force final label recompute for all fighters ──────────────────────────
+    # ── Force final label recompute and rankings update ───────────────────────
     # maybe_update_labels fires only on multiples of LABEL_UPDATE_INTERVAL;
     # fighters whose last fight didn't land on a multiple would have stale labels.
     for f in all_fighters:
         update_labels(f)
+    update_rankings(pools)   # final authoritative snapshot used by all output below
 
     # ── Title fight history ───────────────────────────────────────────────────
     history = get_title_history()
@@ -453,6 +465,92 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
     else:
         console.print("[dim]  No active fighters.[/dim]")
     console.print()
+
+    # ── Elite Rankings (top-10 per weight class) ──────────────────────────────
+    # Shows win-rate component, quality component, and hype component separately
+    # so the calibration can be checked component-by-component.
+    # Also flags Contenders who are unranked or ranked very low — a drift signal
+    # between the label classifier and the ranking formula.
+    gate_enforced, gate_fallback = get_gate_stats()
+    console.print()
+    console.print(Rule("[bold]Elite Rankings (tier4) — Component Breakdown[/bold]"))
+    console.print(
+        f"[dim]  Updated every {RANKINGS_UPDATE_INTERVAL} fights  |  "
+        f"Top {RANKINGS_SIZE} per division  |  "
+        f"Score = {_W_WIN_RATE}*WR + {_W_QUALITY}*Q + {_W_HYPE}*H[/dim]"
+    )
+    console.print(
+        f"[dim]  Gate stats: {gate_enforced} times enforced (unranked-only pool applied)  |  "
+        f"{gate_fallback} fallbacks (pool too small to filter)[/dim]"
+    )
+    console.print()
+
+    DISPLAY_TOP_N = 10
+
+    for wc in WEIGHT_CLASSES:
+        rankings = get_rankings(wc)
+        elite_fighters_wc = pools[wc].get("tier4", [])
+        n_elite = len(elite_fighters_wc)
+
+        console.print(
+            f"[bold]{wc.title()} ({_WC_SHORT[wc]})[/bold]  "
+            f"[dim]{n_elite} active in Elite pool[/dim]"
+        )
+
+        if not rankings:
+            console.print("[dim]  No rankings yet (not enough fights or pool empty).[/dim]")
+            console.print()
+            continue
+
+        rt = Table(box=box.SIMPLE_HEAD, show_lines=False, padding=(0, 1))
+        rt.add_column("#",     justify="right",  style="dim",         width=3)
+        rt.add_column("Fighter",                 style="white",       min_width=16, max_width=18)
+        rt.add_column("Rec",   justify="center", style="bold",        width=5)
+        rt.add_column("n",     justify="right",  style="dim",         width=3)
+        rt.add_column("rw",    justify="right",  style="cyan",        width=3)
+        rt.add_column("Score", justify="right",  style="bold yellow", width=5)
+        rt.add_column("WR*W",  justify="right",  style="cyan",        width=5)
+        rt.add_column("Q*W",   justify="right",  style="green",       width=5)
+        rt.add_column("H*W",   justify="right",  style="dim",         width=5)
+        rt.add_column("Label", style="yellow",                        width=6)
+
+        for e in rankings[:DISPLAY_TOP_N]:
+            f = e.fighter
+            t4_w, t4_l = f.record_by_tier("tier4")
+            rec = f"{t4_w}-{t4_l}"
+            label_s = _label_str(f)
+            rt.add_row(
+                str(e.rank),
+                f.name,
+                rec,
+                str(e.n_elite_fights),
+                str(e.n_ranked_wins),
+                f"{e.score:.3f}",
+                f"{_W_WIN_RATE * e.win_rate_component:.3f}",
+                f"{_W_QUALITY  * e.quality_component:.3f}",
+                f"{_W_HYPE     * e.hype_component:.3f}",
+                label_s,
+            )
+        console.print(rt)
+
+        # ── Contender alignment check ─────────────────────────────────────────
+        # Flag any labeled Contender not in the top-15 or ranked very low (>12).
+        # Drift is expected occasionally (two independent systems), but should be visible.
+        for f in elite_fighters_wc:
+            if CONTENDER not in f.labels:
+                continue
+            entry = next((e for e in rankings if e.fighter is f), None)
+            if entry is None:
+                console.print(
+                    f"[yellow]  DRIFT: {f.name} is Contender but NOT in top-15.[/yellow]"
+                )
+            elif entry.rank > 12:
+                console.print(
+                    f"[yellow]  DRIFT: {f.name} is Contender but ranks #{entry.rank} "
+                    f"(score={entry.score:.3f}).[/yellow]"
+                )
+
+        console.print()
 
 
 def main() -> None:
