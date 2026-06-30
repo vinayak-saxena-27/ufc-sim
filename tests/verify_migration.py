@@ -18,6 +18,9 @@ CHECK 3 (spot-check):
 
 Run: python verify_migration.py
 """
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import random
 
 from fight import simulate_fight

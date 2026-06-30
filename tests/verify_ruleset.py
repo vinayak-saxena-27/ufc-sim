@@ -1,4 +1,4 @@
-"""
+﻿"""
 verify_ruleset.py -- Per-tier ruleset verification (Session 4d).
 
 Four checks:
@@ -10,9 +10,8 @@ Four checks:
 from __future__ import annotations
 
 import random
-import sys as _sys
-
-_sys.path.insert(0, r"C:\Users\vinay\ufc-sim")
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from tiers import TIER_LEVELS, TIER_RULESET, TIER_CONFIG, generate_all_tiers
 from fight_engine import simulate_full_fight, TICKS_PER_ROUND, TICK_SECONDS

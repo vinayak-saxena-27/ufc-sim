@@ -217,15 +217,6 @@ def execute_removal(
     return rec
 
 
-def execute_cut(
-    fighter:   Fighter,
-    pools:     dict[str, dict[str, list[Fighter]]],
-    fight_num: int = 0,
-) -> CutRecord:
-    """Thin wrapper: execute_removal with reason='cut'."""
-    return execute_removal(fighter, pools, fight_num, "cut")
-
-
 # ── Periodic hook (call after maybe_update_labels) ───────────────────────────
 
 def maybe_evaluate_cut(
