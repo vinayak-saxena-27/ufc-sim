@@ -15,6 +15,9 @@ Run: python verify_elite_matchmaking.py
 """
 from __future__ import annotations
 
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import random
 from collections import defaultdict
 from statistics import mean, median
@@ -22,7 +25,7 @@ from statistics import mean, median
 from fight import simulate_fight
 from tiers import generate_all_tiers
 from matchmaking import (
-    pick_opponent, pick_fighter_a, pick_scheduled_elite_a, apply_tier_transitions,
+    pick_opponent, pick_scheduled_elite_a, apply_tier_transitions,
     reset_gate_stats, get_gate_stats,
     reset_elite_pairings, get_elite_pairings,
     ELITE_FIGHT_INTERVAL,
@@ -133,7 +136,7 @@ def run_sim() -> tuple[list, dict, dict, dict, int]:
         if not all_fighters:
             break
 
-        a = pick_fighter_a(all_fighters, pools)
+        a = random.choice(all_fighters)
         try:
             b = pick_opponent(a, pools)
         except IndexError:

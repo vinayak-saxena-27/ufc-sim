@@ -129,11 +129,3 @@ def generate_fighter(template_name: str) -> Fighter:
     )
 
 
-def generate_population(per_template: int = 40) -> list[Fighter]:
-    """Generates `per_template` fighters from each of the 5 templates."""
-    reset_name_registry()
-    fighters: list[Fighter] = []
-    for template_name in TEMPLATES:
-        for _ in range(per_template):
-            fighters.append(generate_fighter(template_name))
-    return fighters

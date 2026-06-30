@@ -166,19 +166,6 @@ def apply_age_to_fighter(fighter: Fighter) -> Fighter:
     )
 
 
-def maybe_advance_age(fighter: Fighter) -> None:
-    """
-    SUPERSEDED by advance_all_ages() — kept for any remaining call sites during
-    migration; will be removed once all callers are confirmed updated.
-
-    Old behaviour: advance fighter.age by 1 year every FIGHTS_PER_SIM_YEAR fights.
-    Correctness flaw: inactive fighters never aged.  Use advance_all_ages() instead.
-    """
-    n = len(fighter.fight_history)
-    if n > 0 and n % FIGHTS_PER_SIM_YEAR == 0:
-        fighter.age += 1
-
-
 # ── Time-based global age advancement ─────────────────────────────────────────
 
 SIM_DAYS_PER_YEAR: int = 365

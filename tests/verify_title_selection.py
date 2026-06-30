@@ -13,6 +13,9 @@ N_FIGHTS controls sim length; SEED for reproducibility.
 """
 from __future__ import annotations
 
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import random
 import sys
 
@@ -30,7 +33,7 @@ random.seed(SEED)
 
 from tiers        import generate_all_tiers
 from matchmaking  import (
-    pick_opponent, pick_fighter_a, pick_scheduled_elite_a,
+    pick_opponent, pick_scheduled_elite_a,
     apply_tier_transitions, reset_gate_stats, reset_elite_pairings,
     ELITE_FIGHT_INTERVAL,
 )
@@ -99,7 +102,7 @@ for i in range(N_FIGHTS):
     if not all_fighters:
         break
 
-    a = pick_fighter_a(all_fighters, pools)
+    a = random.choice(all_fighters)
     try:
         b = pick_opponent(a, pools)
     except IndexError:

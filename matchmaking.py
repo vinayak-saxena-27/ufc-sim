@@ -54,12 +54,9 @@ weight(dist) = 1.0 / (ELITE_PROXIMITY_BASE + |rank_a - rank_b|)
 At base=1.0: adjacent ranks weight 0.50, dist=5 weight 0.17, dist=12 weight 0.08.
 Increase to flatten (more uniform); decrease to sharpen (tighter clustering). First-pass."""
 
-ELITE_A_SELECTION_RATE: float = 0.0
-"""Stratified A-selection rate (option a density fix -- disabled).
-Tested at 0.20 and 0.30: both cleared the 2x density bar but depleted the Elite
-pool faster than it replenishes, collapsing the Layer-2+3 sub-pool structure.
-Root cause: boosting Elite fight frequency and depleting the pool are the same
-multiplier -- no rate separates them.  Kept at 0.0; option (b) is the active fix."""
+# Stratified A-selection (option a density fix) was tested at rates 0.20 and 0.30
+# and rejected: boosting Elite fight frequency and depleting the pool are the same
+# multiplier -- no rate separates them. Option (b) scheduled fights are the active fix.
 
 ELITE_FIGHT_INTERVAL: int = 5
 """One scheduled Elite-vs-Elite fight is injected per this many main-loop fights.
@@ -252,28 +249,6 @@ def pick_scheduled_elite_a(
         return None
     wc = random.choice(fallback)
     return random.choice(pools[wc]["tier4"])
-
-
-def pick_fighter_a(
-    all_fighters: list[Fighter],
-    pools: dict[str, dict[str, list[Fighter]]],
-) -> Fighter:
-    """Stratified A-selection: draw from the Elite (tier4) pool at ELITE_A_SELECTION_RATE,
-    otherwise draw uniformly from all_fighters.
-
-    This is option (a) of the density fix: Elite fighters are ~18% of the population
-    but receive a boosted share of A-slots so ranked fighters appear more frequently
-    without changing the Layers 2+3 opponent-selection logic.  At rate=0.30, a specific
-    ranked fighter's expected fight frequency roughly doubles vs uniform selection alone.
-
-    Falls back to all_fighters if the Elite pool happens to be empty (safe at any point
-    in the sim, including during bootstrap before any tier4 fights exist).
-    """
-    if ELITE_A_SELECTION_RATE > 0.0 and random.random() < ELITE_A_SELECTION_RATE:
-        elite = [f for wc_pools in pools.values() for f in wc_pools.get("tier4", [])]
-        if elite:
-            return random.choice(elite)
-    return random.choice(all_fighters)
 
 
 def pick_opponent(

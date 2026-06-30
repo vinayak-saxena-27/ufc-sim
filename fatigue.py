@@ -118,23 +118,6 @@ def update_fatigue(state: FatigueState, round_end_stamina: float) -> FatigueStat
 
 # ─── Fatigue modifier functions ────────────────────────────────────────────────
 
-def effective_chin_fatigued(fighter: Fighter, state: FatigueState) -> float:
-    """
-    Compute effective chin WITH cumulative fatigue penalty applied.
-
-    Returns value in (0, 1); decreases as cumulative_fatigue grows.
-
-    This is the Session 4c wire-up of the hook flagged in 4b's _effective_chin():
-      4b uses _logistic(f.chin) as a static baseline.
-      4c uses this function when fatigue state is available.
-
-    NOT applied to submission finish-pressure (subs are position/control-driven).
-    Only the STRIKING track in 4b uses effective_chin; this function feeds that.
-    """
-    penalized_chin = fighter.chin - state.cumulative_fatigue * CHIN_FATIGUE_PENALTY
-    return _logistic(penalized_chin)
-
-
 def chin_penalty_points(state: FatigueState) -> float:
     """Return the raw chin attribute penalty for a given fatigue state (for logging)."""
     return state.cumulative_fatigue * CHIN_FATIGUE_PENALTY
@@ -220,37 +203,30 @@ if __name__ == "__main__":
     print(f"Fighter: {wres.name} (Dagestan)")
     print(f"  Base attrs:  chin={wres.chin:>+.1f}  wrestling={wres.wrestling:>+.1f}"
           f"  clinch={wres.clinch:>+.1f}")
-    print(f"  Base effective_chin = {_logistic(wres.chin):.4f}")
     print(f"  (Unchanged by fatigue: boxing={wres.boxing:>+.1f}"
           f"  bjj={wres.bjj:>+.1f}  power={wres.power:>+.1f})")
     print()
     print(f"  {'Round':<7}  {'stam_start':>10}  {'cum_fat':>9}  "
-          f"{'eff_chin':>9}  {'chin_attr':>10}  {'wres_attr':>10}  "
+          f"{'chin_attr':>10}  {'wres_attr':>10}  "
           f"{'clinch_attr':>11}  {'boxing':>8}  {'bjj':>8}")
-    print("  " + "-" * 95)
+    print("  " + "-" * 82)
 
     state = fresh_fatigue()
 
     # Simulate 3 rounds using the actual phase engine, letting stamina deplete naturally
     for rnd in range(1, 4):
         fatigued = apply_fatigue_to_fighter(wres, state)
-        eff_chin = effective_chin_fatigued(wres, state)
 
         print(f"  {rnd:<7}  {state.stamina_start:>10.1f}  {state.cumulative_fatigue:>9.3f}  "
-              f"{eff_chin:>9.4f}  {fatigued.chin:>10.2f}  {fatigued.wrestling:>10.2f}  "
+              f"{fatigued.chin:>10.2f}  {fatigued.wrestling:>10.2f}  "
               f"{fatigued.clinch:>11.2f}  {fatigued.boxing:>8.2f}  {fatigued.bjj:>8.2f}")
 
         # Run a real round through 4a to get natural stamina depletion
         tl = simulate_round(fatigued, strk)
         state = update_fatigue(state, tl.end_stamina_a)
 
-    # Show final state
-    eff_chin_final = effective_chin_fatigued(wres, state)
     print()
     print(f"  After round 3 (cumulative_fatigue={state.cumulative_fatigue:.3f}):")
-    print(f"    effective_chin  base={_logistic(wres.chin):.4f}"
-          f"  -> fatigued={eff_chin_final:.4f}"
-          f"  (drop of {_logistic(wres.chin) - eff_chin_final:.4f})")
     print(f"    chin attr:      {wres.chin:>+.2f}"
           f"  -> {wres.chin - chin_penalty_points(state):>+.2f}"
           f"  (penalty={chin_penalty_points(state):.2f})")

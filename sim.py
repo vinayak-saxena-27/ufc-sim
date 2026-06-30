@@ -21,9 +21,9 @@ from rich.table import Table
 from rich.text import Text
 
 from fight import simulate_fight, SCALE
-from tiers import TIER_CONFIG, TIER_LEVELS, WEIGHT_CLASSES, generate_all_tiers
+from tiers import TIER_LEVELS, WEIGHT_CLASSES, generate_all_tiers
 from matchmaking import (
-    pick_opponent, pick_fighter_a, pick_scheduled_elite_a, apply_tier_transitions,
+    pick_opponent, pick_scheduled_elite_a, apply_tier_transitions,
     reset_gate_stats, get_gate_stats,
     reset_elite_pairings, get_elite_pairings, ElitePairingRecord,
     ELITE_FIGHT_INTERVAL,
@@ -112,7 +112,7 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
     for i in range(n_fights):
         if not all_fighters:
             break
-        a = pick_fighter_a(all_fighters, pools)
+        a = random.choice(all_fighters)
         try:
             b = pick_opponent(a, pools)
         except IndexError:
