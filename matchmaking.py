@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import random
+from dataclasses import dataclass
 
 from fighter import Fighter
 from tiers import TIER_LEVELS
 from academies import ACADEMY_PIPELINE
-from rankings import is_eligible_vs_ranked, get_ranked_ids
+from rankings import is_eligible_vs_ranked, get_ranked_ids, get_rankings, RANKINGS_SIZE
 
 # ─── Tuning constants ─────────────────────────────────────────────────────────
 # Adjust once you see promotion/demotion rates in sim output.
@@ -39,6 +40,38 @@ ELITE_DEMOTE_WINDOW:         int = 3   # shorter window specific to tier4
 # Protective matchmaking (prospect protection, gatekeeper roles, ranking position)
 # also plugs in here. For now: simple tier-pool sampling with a small cross-tier rate.
 
+# ── Elite-tier sub-pool constants (Layers 2 + 3) ─────────────────────────────
+
+ELITE_CROSS_POOL_RATE: float = 0.12
+"""Probability of a cross-pool draw within Elite tier: ranked fighter vs unranked pool,
+or unranked fighter vs ranked pool.  Mirrors CROSS_TIER_RATE (tier-to-tier boundary)
+one layer finer — same ratio, same intent.  First-pass: 0.12 → 88% within-pool.
+Tune independently of CROSS_TIER_RATE."""
+
+ELITE_PROXIMITY_BASE: float = 1.0
+"""Rank-proximity weighting base for ranked-vs-ranked Elite fights.
+weight(dist) = 1.0 / (ELITE_PROXIMITY_BASE + |rank_a - rank_b|)
+At base=1.0: adjacent ranks weight 0.50, dist=5 weight 0.17, dist=12 weight 0.08.
+Increase to flatten (more uniform); decrease to sharpen (tighter clustering). First-pass."""
+
+ELITE_A_SELECTION_RATE: float = 0.0
+"""Stratified A-selection rate (option a density fix -- disabled).
+Tested at 0.20 and 0.30: both cleared the 2x density bar but depleted the Elite
+pool faster than it replenishes, collapsing the Layer-2+3 sub-pool structure.
+Root cause: boosting Elite fight frequency and depleting the pool are the same
+multiplier -- no rate separates them.  Kept at 0.0; option (b) is the active fix."""
+
+ELITE_FIGHT_INTERVAL: int = 5
+"""One scheduled Elite-vs-Elite fight is injected per this many main-loop fights.
+Additive: the global fight loop is unchanged, non-Elite fighters keep their natural
+fight cadence, and the Elite pool replenishes at the same rate as without this feature.
+Only Elite fighters gain additional appearances from the injected fights.
+
+At interval=5: 3000 main fights produce 600 injected Elite fights (20% extra).
+Each injected fight picks A via pick_scheduled_elite_a() and routes B through
+pick_opponent() / _pick_elite_opponent() so Layers 2+3 remain active.
+Lower values = denser schedule; set to 0 to disable."""
+
 # Gate statistics — how often the Elite ranked-opponent gate fires per sim run.
 _gate_enforced: int = 0   # gate applied, candidates filtered to unranked only
 _gate_fallback: int = 0   # gate would apply but no unranked candidates exist
@@ -52,6 +85,195 @@ def reset_gate_stats() -> None:
 def get_gate_stats() -> tuple[int, int]:
     """Returns (enforced, fallback) gate trigger counts since last reset."""
     return _gate_enforced, _gate_fallback
+
+
+# ── Elite pairing log ─────────────────────────────────────────────────────────
+
+@dataclass
+class ElitePairingRecord:
+    """One Elite-tier fight pairing, logged for post-sim inspection of sub-pool mix."""
+    weight_class: str
+    fighter_name: str
+    fighter_rank: int | None   # None if unranked at time of fight
+    opp_name:     str
+    opp_rank:     int | None   # None if unranked at time of fight
+    pool_type:    str          # "RR" | "RU" | "UR" | "UU"
+
+
+_elite_pairings: list[ElitePairingRecord] = []
+
+
+def reset_elite_pairings() -> None:
+    """Clear the Elite pairing log.  Call at sim start."""
+    _elite_pairings.clear()
+
+
+def get_elite_pairings() -> list[ElitePairingRecord]:
+    """Return all logged Elite pairings since last reset."""
+    return list(_elite_pairings)
+
+
+def _proximity_pick(
+    fighter: Fighter,
+    ranked_candidates: list[Fighter],
+    rank_map: dict[str, int],
+) -> Fighter:
+    """Weighted-random draw from ranked_candidates; closer ranks are more likely.
+
+    weight(dist) = 1.0 / (ELITE_PROXIMITY_BASE + |rank_a - rank_b|)
+
+    Falls back to uniform if fighter has no rank in rank_map (rankings not yet
+    computed — correct during the bootstrap period before the first update).
+    """
+    fighter_rank = rank_map.get(fighter.fighter_id)
+    if fighter_rank is None:
+        return random.choice(ranked_candidates)
+
+    weights: list[float] = []
+    for f in ranked_candidates:
+        opp_rank = rank_map.get(f.fighter_id)
+        dist = abs(opp_rank - fighter_rank) if opp_rank is not None else RANKINGS_SIZE
+        weights.append(1.0 / (ELITE_PROXIMITY_BASE + dist))
+
+    return random.choices(ranked_candidates, weights=weights, k=1)[0]
+
+
+def _pick_elite_opponent(
+    fighter: Fighter,
+    candidates: list[Fighter],
+) -> Fighter:
+    """Layer 2 + 3 Elite matchmaking: ranked/unranked sub-pool split with
+    rank-proximity weighting within the ranked sub-pool.
+
+    Layer 2 — sub-pool split (ELITE_CROSS_POOL_RATE = 0.12):
+      Ranked fighter:   ~88% draws from ranked sub-pool, ~12% from unranked.
+      Unranked fighter: ~88% draws from unranked sub-pool, ~12% from ranked.
+      Graceful fallback: if the target pool is empty, fight from the available pool.
+
+    Layer 3 — proximity weighting (ranked-vs-ranked only):
+      When a ranked fighter draws from the ranked sub-pool, candidates are weighted
+      inversely by rank distance so fights cluster near the fighter's ranking position.
+      Unranked draws (either direction) use uniform selection.
+
+    Gate note: `candidates` has already been filtered by pick_opponent's ranked-opponent
+    gate for ineligible fighters, so those arrive with only unranked candidates.
+    This function never bypasses that gate — it only further structures whatever
+    candidate set the gate left behind.
+    """
+    wc = fighter.weight_class
+    ranked_ids          = get_ranked_ids()
+    ranked_candidates   = [f for f in candidates if f.fighter_id in ranked_ids]
+    unranked_candidates = [f for f in candidates if f.fighter_id not in ranked_ids]
+    fighter_is_ranked   = fighter.fighter_id in ranked_ids
+
+    rankings_list = get_rankings(wc)
+    rank_map      = {e.fighter.fighter_id: e.rank for e in rankings_list}
+    fighter_rank  = rank_map.get(fighter.fighter_id)
+
+    opp: Fighter
+    pool_type: str
+
+    if fighter_is_ranked:
+        if ranked_candidates and random.random() < 1.0 - ELITE_CROSS_POOL_RATE:
+            opp       = _proximity_pick(fighter, ranked_candidates, rank_map)
+            pool_type = "RR"
+        elif unranked_candidates:
+            opp       = random.choice(unranked_candidates)
+            pool_type = "RU"
+        elif ranked_candidates:                                # cross-pool impossible
+            opp       = _proximity_pick(fighter, ranked_candidates, rank_map)
+            pool_type = "RR"
+        else:
+            opp       = random.choice(candidates)
+            pool_type = "RR"
+    else:
+        if unranked_candidates and random.random() < 1.0 - ELITE_CROSS_POOL_RATE:
+            opp       = random.choice(unranked_candidates)
+            pool_type = "UU"
+        elif ranked_candidates:
+            opp       = random.choice(ranked_candidates)
+            pool_type = "UR"
+        elif unranked_candidates:                              # cross-pool impossible
+            opp       = random.choice(unranked_candidates)
+            pool_type = "UU"
+        else:
+            opp       = random.choice(candidates)
+            pool_type = "UU"
+
+    _elite_pairings.append(ElitePairingRecord(
+        weight_class = wc,
+        fighter_name = fighter.name,
+        fighter_rank = fighter_rank,
+        opp_name     = opp.name,
+        opp_rank     = rank_map.get(opp.fighter_id),
+        pool_type    = pool_type,
+    ))
+    return opp
+
+
+def pick_scheduled_elite_a(
+    pools: dict[str, dict[str, list[Fighter]]],
+) -> Fighter | None:
+    """Pick a RANKED Elite fighter to be A in a scheduled Elite fight (option b).
+
+    Picks from the ranked sub-pool specifically, not all Elite.  This ensures:
+      - Every scheduled fight directly contributes a ranked-fighter appearance.
+      - A is ranked, so _pick_elite_opponent routes to the RR path (ranked_candidates
+        is non-empty by construction since we only schedule when ranked fighters exist).
+      - Self-limiting: if all ranked fighters leave a WC's tier4 pool, that WC is
+        skipped; when all WCs are empty the scheduled slot is silently skipped.
+
+    Weight class is chosen uniformly from WCs that have >= 1 ranked tier4 fighter
+    and >= 1 OTHER tier4 fighter (so opponent selection doesn't immediately fail).
+
+    Falls back to any Elite fighter in the bootstrap period before rankings populate.
+    """
+    ranked_ids = get_ranked_ids()
+
+    # Normal path: pick A from ranked tier4 fighters.
+    # Require >= 2 ranked fighters in the WC's tier4 pool so ranked_candidates is
+    # non-empty when _pick_elite_opponent runs — guarantees pool_type "RR" path fires.
+    eligible = [
+        wc for wc, wc_pools in pools.items()
+        if sum(1 for f in wc_pools.get("tier4", [])
+               if f.fighter_id in ranked_ids) >= 2
+    ]
+    if eligible:
+        wc = random.choice(eligible)
+        ranked_in_wc = [f for f in pools[wc]["tier4"] if f.fighter_id in ranked_ids]
+        return random.choice(ranked_in_wc)
+
+    # Bootstrap fallback (before first rankings update): any WC with >= 2 Elite fighters.
+    fallback = [
+        wc for wc, wc_pools in pools.items()
+        if len(wc_pools.get("tier4", [])) >= 2
+    ]
+    if not fallback:
+        return None
+    wc = random.choice(fallback)
+    return random.choice(pools[wc]["tier4"])
+
+
+def pick_fighter_a(
+    all_fighters: list[Fighter],
+    pools: dict[str, dict[str, list[Fighter]]],
+) -> Fighter:
+    """Stratified A-selection: draw from the Elite (tier4) pool at ELITE_A_SELECTION_RATE,
+    otherwise draw uniformly from all_fighters.
+
+    This is option (a) of the density fix: Elite fighters are ~18% of the population
+    but receive a boosted share of A-slots so ranked fighters appear more frequently
+    without changing the Layers 2+3 opponent-selection logic.  At rate=0.30, a specific
+    ranked fighter's expected fight frequency roughly doubles vs uniform selection alone.
+
+    Falls back to all_fighters if the Elite pool happens to be empty (safe at any point
+    in the sim, including during bootstrap before any tier4 fights exist).
+    """
+    if ELITE_A_SELECTION_RATE > 0.0 and random.random() < ELITE_A_SELECTION_RATE:
+        elite = [f for wc_pools in pools.values() for f in wc_pools.get("tier4", [])]
+        if elite:
+            return random.choice(elite)
+    return random.choice(all_fighters)
 
 
 def pick_opponent(
@@ -84,31 +306,41 @@ def pick_opponent(
             if candidates:
                 break
 
-    # ── Elite ranked-opponent gate (Part 1) ────────────────────────────────────
-    # A fighter matched into tier4 (Elite) who has not earned the right to face
-    # ranked opposition is restricted to unranked candidates only.
-    # Four conditions grant eligibility — see rankings.is_eligible_vs_ranked().
-    # Condition 4 (tier3-dominance fast-track) covers naturally promoted fighters;
-    # generated-at-Elite fighters must prove themselves first (conditions 1–3).
-    # If filtering leaves no candidates (very small pools early in the sim),
-    # fall back to the full candidate list rather than deadlocking.
+    # ── Elite ranked-opponent gate (unchanged) ───────────────────────────────────
+    # An ineligible Elite fighter (hasn't passed any of the four conditions in
+    # rankings.is_eligible_vs_ranked) is restricted to unranked candidates.
+    # Filtering happens here BEFORE _pick_elite_opponent, so the sub-pool logic
+    # below never bypasses this gate — it only further structures the filtered set.
     if fighter.tier == "tier4" and opp_tier == "tier4" and not is_eligible_vs_ranked(fighter):
         global _gate_enforced, _gate_fallback
-        ranked_ids = get_ranked_ids()
-        unranked_candidates = [f for f in candidates if f.fighter_id not in ranked_ids]
-        if unranked_candidates:
-            candidates = unranked_candidates
+        ranked_ids_gate = get_ranked_ids()
+        unranked_candidates_gate = [f for f in candidates if f.fighter_id not in ranked_ids_gate]
+        if unranked_candidates_gate:
+            candidates = unranked_candidates_gate
             _gate_enforced += 1
         else:
             _gate_fallback += 1
             # Pool too small to enforce gate — allow any candidate (documented fallback)
 
+    # ── Elite sub-pool split + proximity weighting (Layers 2 + 3) ─────────────
+    if fighter.tier == "tier4" and opp_tier == "tier4":
+        return _pick_elite_opponent(fighter, candidates)
+
     return random.choice(candidates)
 
 
 def _recent_tier_fights(fighter: Fighter, window: int) -> list:
-    """Last `window` fight-history entries tagged with the fighter's current tier."""
-    tier_fights = [r for r in fighter.fight_history if r.tier == fighter.tier]
+    """Last `window` non-exhibition fight-history entries tagged with the fighter's tier.
+
+    Scheduled Elite density fights (org="exhibition") are excluded so that fighters
+    who participate in 2x as many fights don't hit the demotion window faster than
+    the window was calibrated for.  Scheduled fights still write to fight_history
+    and contribute to ranking scores — only demotion and promotion checks skip them.
+    """
+    tier_fights = [
+        r for r in fighter.fight_history
+        if r.tier == fighter.tier and r.org != "exhibition"
+    ]
     return tier_fights[-window:]
 
 

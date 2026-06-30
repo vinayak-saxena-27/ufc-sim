@@ -22,7 +22,12 @@ from rich.text import Text
 
 from fight import simulate_fight, SCALE
 from tiers import TIER_CONFIG, TIER_LEVELS, WEIGHT_CLASSES, generate_all_tiers
-from matchmaking import pick_opponent, apply_tier_transitions, reset_gate_stats, get_gate_stats
+from matchmaking import (
+    pick_opponent, pick_fighter_a, pick_scheduled_elite_a, apply_tier_transitions,
+    reset_gate_stats, get_gate_stats,
+    reset_elite_pairings, get_elite_pairings, ElitePairingRecord,
+    ELITE_FIGHT_INTERVAL,
+)
 from labels import maybe_update_labels, reset_title_registry, update_labels, get_champion_id, CONTENDER
 from title import reset_title_scheduling, maybe_run_title_fight, get_title_history, TITLE_FIGHT_INTERVAL
 from age import advance_all_ages, reset_age_advancement
@@ -76,6 +81,7 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
     reset_sim_clock()
     reset_age_advancement()
     reset_retirement_scanning()
+    reset_elite_pairings()
     all_fighters = [
         f
         for wc_pools in pools.values()
@@ -106,7 +112,7 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
     for i in range(n_fights):
         if not all_fighters:
             break
-        a = random.choice(all_fighters)
+        a = pick_fighter_a(all_fighters, pools)
         try:
             b = pick_opponent(a, pools)
         except IndexError:
@@ -159,6 +165,35 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
         # Recompute Elite rankings every RANKINGS_UPDATE_INTERVAL sim fights.
         if (i + 1) % RANKINGS_UPDATE_INTERVAL == 0:
             update_rankings(pools)
+
+        # ── Scheduled Elite fight (option b density fix) ─────────────────────
+        # Injected additively every ELITE_FIGHT_INTERVAL main fights.  Non-Elite
+        # fighters are unaffected; Elite pool replenishment rate is unchanged.
+        if ELITE_FIGHT_INTERVAL > 0 and (i + 1) % ELITE_FIGHT_INTERVAL == 0:
+            _ae = pick_scheduled_elite_a(pools)
+            if _ae is not None:
+                try:
+                    _be = pick_opponent(_ae, pools)
+                except IndexError:
+                    pass
+                else:
+                    _ewc, _etier, _eday = _ae.weight_class, _ae.tier, get_sim_day()
+                    _ew, _el = simulate_fight(_ae, _be, org="exhibition", sim_day=_eday)
+                    _erm: list = []
+                    for _ef in (_ew, _el):
+                        apply_tier_transitions(_ef, pools)
+                        maybe_update_labels(_ef)
+                        _er = maybe_evaluate_retirement(_ef, pools, fight_num=i + 1)
+                        if not _er:
+                            _er = maybe_evaluate_cut(_ef, pools, fight_num=i + 1)
+                        if _er:
+                            _erm.append(_ef)
+                    for _erf in _erm:
+                        all_fighters[:] = [f for f in all_fighters if f is not _erf]
+                    maybe_run_title_fight(_ewc, _etier, pools, org="exhibition",
+                                         fight_num=i + 1, all_fighters=all_fighters)
+                    advance_sim_clock()
+                    advance_all_ages(all_fighters)
 
         if debug:
             a_won = winner is a
@@ -513,6 +548,55 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
     else:
         console.print("[dim]  No active fighters.[/dim]")
     console.print()
+
+    # ── Elite Matchmaking Sub-Pool Log ───────────────────────────────────────────
+    all_pairings = get_elite_pairings()
+    if all_pairings:
+        console.print()
+        console.print(Rule("[bold]Elite Matchmaking Sub-Pool Log[/bold]"))
+
+        # Distribution across all weight classes.
+        counts: dict[str, int] = {"RR": 0, "RU": 0, "UR": 0, "UU": 0}
+        for p in all_pairings:
+            counts[p.pool_type] = counts.get(p.pool_type, 0) + 1
+        total_elite = len(all_pairings)
+
+        # Ranked-fighter perspective: how often did a ranked fighter face another ranked fighter?
+        ranked_fights = [p for p in all_pairings if p.fighter_rank is not None]
+        rr_from_ranked = sum(1 for p in ranked_fights if p.pool_type == "RR")
+        ranked_wr_pct = 100 * rr_from_ranked / len(ranked_fights) if ranked_fights else 0.0
+
+        console.print()
+        console.print(
+            f"  [dim]Total Elite fights: {total_elite}  |  "
+            f"Ranked-fighter perspective: {rr_from_ranked}/{len(ranked_fights)} = "
+            f"{ranked_wr_pct:.0f}% within ranked pool  (target ~88%)[/dim]"
+        )
+        console.print()
+        console.print(
+            f"  [dim]Distribution:  "
+            f"R-vs-R {counts['RR']:>4} ({100*counts['RR']//max(1,total_elite):>2}%)  "
+            f"R-vs-U {counts['RU']:>4} ({100*counts['RU']//max(1,total_elite):>2}%)  "
+            f"U-vs-R {counts['UR']:>4} ({100*counts['UR']//max(1,total_elite):>2}%)  "
+            f"U-vs-U {counts['UU']:>4} ({100*counts['UU']//max(1,total_elite):>2}%)[/dim]"
+        )
+        console.print()
+
+        # Sample: first 35 LW Elite pairings so the proximity pattern is visible.
+        lw_pairings = [p for p in all_pairings if p.weight_class == "lightweight"][:35]
+        if lw_pairings:
+            console.print(f"  [dim]Lightweight sample ({min(35, len(lw_pairings))} of "
+                          f"{sum(1 for p in all_pairings if p.weight_class == 'lightweight')} LW Elite fights):[/dim]")
+            console.print()
+            console.print(f"  [dim]  {'Fighter':<22}  {'Rk':>4}  {'Opponent':<22}  {'Rk':>4}  Type[/dim]")
+            console.print(f"  [dim]  {'-'*62}[/dim]")
+            for p in lw_pairings:
+                frk = f"#{p.fighter_rank}" if p.fighter_rank is not None else "  U"
+                ork = f"#{p.opp_rank}"     if p.opp_rank     is not None else "  U"
+                console.print(
+                    f"  [dim]  {p.fighter_name:<22}  {frk:>4}  {p.opp_name:<22}  {ork:>4}  {p.pool_type}[/dim]"
+                )
+        console.print()
 
     # ── Elite Rankings (top-10 per weight class) ──────────────────────────────
     # Shows win-rate component, quality component, and hype component separately

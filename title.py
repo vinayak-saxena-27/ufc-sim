@@ -1,15 +1,28 @@
 """
-title.py — Minimal title-fight scheduling for the MMA career sim.
+title.py — Title-fight scheduling for the MMA career sim.
 
 For each (weight_class, tier_key) pair that supports titles (Regional through
 Elite per TIER_RULESET — Amateur has no title fights), a title fight is
 scheduled once every TITLE_FIGHT_INTERVAL regular fights registered for that
 pool.
 
-Challenger selection (deliberately simple — not a full rankings system):
-  Vacant belt  → top-2 overall fighters in the pool fight for the title.
-  Occupied belt → current champion defends vs the highest-overall eligible
-                  non-champion in the same pool.
+Challenger selection:
+  Vacant belt  → #1 vs #2 in the current rankings for that weight class.
+                 Inactivity override: walk down the ranked list if a slot's
+                 default pick is relatively inactive.
+                 No hype override for vacant fights (no incumbent to upset).
+
+  Occupied belt → #1 ranked eligible contender as the default challenger.
+                 Two overrides evaluated in order:
+                 1. Inactivity override: walk down the ranked list (up to
+                    _INACTIVITY_WALK_LIMIT positions) if the current pick is
+                    relatively inactive.  If all candidates are inactive, keep #1.
+                 2. Hype override: with probability _HYPE_OVERRIDE_PROB, bump a
+                    ranked #2-5 contender who has >= _HYPE_OVERRIDE_MIN_DIFF more
+                    hype than the current pick.  Only fires if inactivity did not.
+
+  Thin-rankings fallback: if a weight class has too few ranked entries, falls
+  back to the prior placeholder (highest overall among eligible fighters).
 
 Champion status is stored in labels.py's _title_holders registry via
 award_title(), which this module calls immediately after every title fight
@@ -39,6 +52,7 @@ Round count:
 """
 from __future__ import annotations
 
+import random
 from dataclasses import dataclass
 
 from fighter import Fighter
@@ -48,8 +62,8 @@ from matchmaking import apply_tier_transitions
 from tiers import TIER_RULESET
 from cuts import maybe_evaluate_cut
 from retirement import maybe_evaluate_retirement
-from rankings import is_eligible_vs_ranked
-from sim_calendar import get_sim_day
+from rankings import get_rankings, is_eligible_vs_ranked, RankingEntry, RANKINGS_SIZE
+from sim_calendar import get_sim_day, inactivity_percentile
 
 
 # ── Tuning ────────────────────────────────────────────────────────────────────
@@ -68,6 +82,23 @@ adjust here; no other file needs to change.
 
 _MIN_POOL_SIZE: int = 2   # need at least 2 fighters to hold a title fight
 
+_INACTIVITY_WALK_LIMIT: int = 7
+"""Walk at most this many ranked positions when applying the inactivity override.
+If all positions are inactive, fall back to the first (default) pick."""
+
+_HYPE_OVERRIDE_PROB: float = 0.20
+"""Probability the hype override is even considered each title defense.
+At 20%: roughly 1-2 hype bumps per pool per full sim run at the default interval.
+Set to 0.0 to disable."""
+
+_HYPE_OVERRIDE_MIN_DIFF: float = 12.0
+"""A #2-5 ranked contender must have at least this many more hype points than
+the current default pick to qualify for the hype override.  With Elite hype
+ranging ~15-60, a 12-point gap is meaningful without being extreme."""
+
+_HYPE_CANDIDATE_RANKS: int = 5
+"""Search ranked positions #2 through this (inclusive) for hype-override candidates."""
+
 
 # ── State ─────────────────────────────────────────────────────────────────────
 
@@ -81,6 +112,8 @@ class TitleFightRecord:
     method:           str    # "decision", "KO/TKO", or "submission"
     rounds_completed: int    # actual rounds run; equals title_rounds on a decision
     was_vacant:       bool   # True → both fighters competed for a vacant belt
+    override:         str | None = None   # None / "inactivity" / "hype" / "fallback"
+    challenger_rank:  int | None = None   # current rank of the challenger (slot-A if vacant)
 
 
 _fight_counters: dict[tuple[str, str], int]  = {}
@@ -98,43 +131,131 @@ def get_title_history() -> list[TitleFightRecord]:
     return list(_title_history)
 
 
-# ── Challenger selection ──────────────────────────────────────────────────────
+# ── Internal helpers ──────────────────────────────────────────────────────────
 
 def _find_champion(pool: list[Fighter], champion_id: str) -> Fighter | None:
     return next((f for f in pool if f.fighter_id == champion_id), None)
+
+
+def _get_fighter_rank(fighter: Fighter, weight_class: str) -> int | None:
+    """Return fighter's current rank in their weight class, or None if unranked."""
+    for entry in get_rankings(weight_class):
+        if entry.fighter.fighter_id == fighter.fighter_id:
+            return entry.rank
+    return None
+
+
+def _walk_inactivity(
+    candidates: list[RankingEntry],
+    pool: list[Fighter],
+) -> tuple[RankingEntry, bool]:
+    """Walk candidates until a non-relatively-inactive fighter is found.
+
+    Returns (selected_entry, override_fired) where override_fired is True
+    if we skipped the first candidate (i.e. not the default #1 pick).
+    If all candidates are inactive, returns the first entry with override_fired=False
+    — we log this as no override (the default still applies, just unavoidably inactive).
+    """
+    first = candidates[0]
+    for entry in candidates[:_INACTIVITY_WALK_LIMIT]:
+        result = inactivity_percentile(entry.fighter, pool)
+        if result is None or not result.is_relatively_inactive:
+            fired = entry is not first
+            return entry, fired
+    return first, False  # all inactive: keep default
 
 
 def _pick_challenger(
     pool: list[Fighter],
     champion_id: str,
     tier_key: str,
-) -> Fighter | None:
-    """
-    Highest-overall fighter in the pool who is not the current champion.
+    weight_class: str,
+) -> tuple[Fighter | None, str | None]:
+    """Rankings-driven challenger selection for a title defense.
 
-    For tier4 (Elite) title fights the champion is always ranked, so challenger
-    must pass the ranked-opponent gate — same four conditions as regular matchmaking.
-    This prevents a freshly arrived Elite fighter from jumping straight to a
-    title shot without the normal proving period.  If the gate filters everyone
-    out (very small pool early in the sim), the gate is relaxed to avoid deadlock.
+    Returns (challenger, override) where override is one of:
+      None         -- #1 ranked, no override fired
+      "inactivity" -- inactivity override walked past #1
+      "hype"       -- hype override bumped a #2-5 contender
+      "fallback"   -- thin rankings, used highest-overall placeholder
     """
     eligible = [f for f in pool if f.fighter_id != champion_id]
     if not eligible:
-        return None
+        return None, None
+
     if tier_key == "tier4":
         gate_eligible = [f for f in eligible if is_eligible_vs_ranked(f)]
         if gate_eligible:
             eligible = gate_eligible
-        # else: pool too small / bootstrapping — allow any eligible fighter
-    return max(eligible, key=lambda f: f.overall)
+
+    eligible_ids = {f.fighter_id for f in eligible}
+    rankings = get_rankings(weight_class)
+    ranked_eligible = [e for e in rankings if e.fighter.fighter_id in eligible_ids]
+
+    if not ranked_eligible:
+        return max(eligible, key=lambda f: f.overall), "fallback"
+
+    # 1. Inactivity override: walk from #1 down the ranked list
+    pick_entry, inactivity_fired = _walk_inactivity(ranked_eligible, pool)
+    override = "inactivity" if inactivity_fired else None
+    challenger = pick_entry.fighter
+
+    # 2. Hype override: only if inactivity didn't fire; small probability bump
+    if override is None and random.random() < _HYPE_OVERRIDE_PROB:
+        hype_candidates = [
+            e.fighter
+            for e in ranked_eligible[1:_HYPE_CANDIDATE_RANKS]
+            if e.fighter.hype - challenger.hype >= _HYPE_OVERRIDE_MIN_DIFF
+        ]
+        if hype_candidates:
+            challenger = max(hype_candidates, key=lambda f: f.hype)
+            override = "hype"
+
+    return challenger, override
 
 
-def _pick_vacant_pair(pool: list[Fighter]) -> tuple[Fighter, Fighter] | None:
-    """Top-2 overall for a vacant-belt fight.  Returns None if pool is too small."""
+def _pick_vacant_pair(
+    pool: list[Fighter],
+    weight_class: str,
+) -> tuple[tuple[Fighter, Fighter], str | None] | None:
+    """Rankings-driven selection for a vacant-belt fight.
+
+    Returns ((fa, fb), override) where override is one of:
+      None         -- #1 vs #2, no override
+      "inactivity" -- inactivity override on at least one slot
+      "fallback"   -- thin rankings, used highest-overall placeholder
+    Returns None if pool is too small to run a title fight.
+    """
     if len(pool) < _MIN_POOL_SIZE:
         return None
-    top2 = sorted(pool, key=lambda f: f.overall, reverse=True)[:2]
-    return top2[0], top2[1]
+
+    eligible_ids = {f.fighter_id for f in pool}
+    rankings = get_rankings(weight_class)
+    ranked_eligible = [e for e in rankings if e.fighter.fighter_id in eligible_ids]
+
+    if len(ranked_eligible) < 2:
+        top2 = sorted(pool, key=lambda f: f.overall, reverse=True)[:2]
+        return (top2[0], top2[1]), "fallback"
+
+    # Slot A (#1): walk for inactivity
+    slot_a_entry, override_a = _walk_inactivity(ranked_eligible, pool)
+
+    # Slot B (#2, excluding slot A): walk for inactivity
+    remaining = [e for e in ranked_eligible if e.fighter is not slot_a_entry.fighter]
+    if not remaining:
+        others = sorted(
+            [f for f in pool if f is not slot_a_entry.fighter],
+            key=lambda f: f.overall,
+            reverse=True,
+        )
+        if not others:
+            return None
+        override = "inactivity" if override_a else None
+        return (slot_a_entry.fighter, others[0]), override
+
+    slot_b_entry, override_b = _walk_inactivity(remaining, pool)
+    override = "inactivity" if (override_a or override_b) else None
+    return (slot_a_entry.fighter, slot_b_entry.fighter), override
 
 
 # ── Main scheduling hook ──────────────────────────────────────────────────────
@@ -176,28 +297,47 @@ def maybe_run_title_fight(
 
     champion_id = get_champion_id(weight_class, tier_key)
     was_vacant  = False
+    override    = None
+    challenger_rank: int | None = None
 
     if champion_id is None:
-        # Belt never awarded or explicitly vacant.
-        pair = _pick_vacant_pair(pool)
-        if pair is None:
+        result = _pick_vacant_pair(pool, weight_class)
+        if result is None:
             return False
-        fa, fb     = pair
+        (fa, fb), override = result
         was_vacant = True
+        challenger_rank = _get_fighter_rank(fa, weight_class)
+        rank_b = _get_fighter_rank(fb, weight_class)
+        override_tag = f" [{override}]" if override else ""
+        print(f"[TITLE] {weight_class} {tier_key} VACANT -- "
+              f"{fa.name} (rank={challenger_rank or 'NR'}) "
+              f"vs {fb.name} (rank={rank_b or 'NR'}){override_tag}")
     else:
         champ = _find_champion(pool, champion_id)
         if champ is None:
-            # Champion was demoted out of this pool — treat as vacant.
-            pair = _pick_vacant_pair(pool)
-            if pair is None:
+            # Champion demoted — treat as vacant.
+            result = _pick_vacant_pair(pool, weight_class)
+            if result is None:
                 return False
-            fa, fb     = pair
+            (fa, fb), override = result
             was_vacant = True
+            challenger_rank = _get_fighter_rank(fa, weight_class)
+            rank_b = _get_fighter_rank(fb, weight_class)
+            override_tag = f" [{override}]" if override else ""
+            print(f"[TITLE] {weight_class} {tier_key} VACANT (champ gone) -- "
+                  f"{fa.name} (rank={challenger_rank or 'NR'}) "
+                  f"vs {fb.name} (rank={rank_b or 'NR'}){override_tag}")
         else:
-            challenger = _pick_challenger(pool, champion_id, tier_key)
+            challenger, override = _pick_challenger(pool, champion_id, tier_key, weight_class)
             if challenger is None:
                 return False
             fa, fb = champ, challenger
+            challenger_rank = _get_fighter_rank(challenger, weight_class)
+            champ_rank = _get_fighter_rank(champ, weight_class)
+            override_tag = f" [{override}]" if override else ""
+            print(f"[TITLE] {weight_class} {tier_key} DEFENSE -- "
+                  f"[C] {champ.name} (rank={champ_rank or 'NR'}) "
+                  f"vs {challenger.name} (rank={challenger_rank or 'NR'}){override_tag}")
 
     winner, loser = simulate_fight(fa, fb, org=org, is_title=True, sim_day=get_sim_day())
 
@@ -223,5 +363,7 @@ def maybe_run_title_fight(
         method           = winner.fight_history[-1].method,
         rounds_completed = winner.fight_history[-1].rounds_completed,
         was_vacant       = was_vacant,
+        override         = override,
+        challenger_rank  = challenger_rank,
     ))
     return True
