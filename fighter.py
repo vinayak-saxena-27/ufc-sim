@@ -34,6 +34,10 @@ class Fighter:
     tier: str = "unknown"           # current competition tier; changes on promotion/demotion
     weight_class: str = "unknown"  # "lightweight" | "welterweight" | "heavyweight"
     academy: str = ""              # assigned training camp; set at generation, stable thereafter
+    # prospect_tier: assigned at generation; influences development RATE, not ceiling.
+    # Fighters generated before the development session default to "developing" (retrofitted,
+    # not properly assigned — their base attributes already reflect career-stage skill).
+    prospect_tier: str = "developing"
     fighter_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     # HOOK: weight-class affinity per template (e.g. American Wrestling skewing Heavyweight,
     # Muay Thai/SEA skewing Lightweight) is future work — deferred to a later session so the
@@ -53,6 +57,12 @@ class Fighter:
     fight_iq:    float = 0.0
 
     hype: float = 0.0  # Decoupled from true skill — see templates.py for generation note.
+
+    # Accumulated development gain from training over career so far.
+    # Modified by advance_all_development() (annual sweep) and apply_win_development_boost()
+    # (per win). Applied at fight-resolution time via apply_development_to_fighter() —
+    # base sub-attributes above are NEVER written by the development system.
+    development_modifier: float = 0.0
 
     fight_history: list[FightResult] = field(default_factory=list)
     labels: set[str] = field(default_factory=set)

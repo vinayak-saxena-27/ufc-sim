@@ -31,6 +31,7 @@ from matchmaking import (
 from labels import maybe_update_labels, reset_title_registry, update_labels, get_champion_id, CONTENDER
 from title import reset_title_scheduling, maybe_run_title_fight, get_title_history, TITLE_FIGHT_INTERVAL
 from age import advance_all_ages, reset_age_advancement
+from development import advance_all_development, apply_win_development_boost, reset_development_advancement
 from cuts import maybe_evaluate_cut, get_cut_log, reset_cut_registry
 from retirement import maybe_evaluate_retirement, maybe_retire_inactive, reset_retirement_scanning
 from rankings import (
@@ -39,6 +40,11 @@ from rankings import (
     _W_WIN_RATE, _W_QUALITY, _W_HYPE,
 )
 from sim_calendar import reset_sim_clock, advance_sim_clock, get_sim_day, SIM_DAYS_PER_FIGHT
+from replenishment import (
+    initialize_replenishment, run_replenishment,
+    get_replenishment_history, get_backstop_log, get_event_log, get_total_generated,
+    FLOOR_THRESHOLDS,
+)
 
 console = Console()
 
@@ -80,6 +86,8 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
     reset_gate_stats()
     reset_sim_clock()
     reset_age_advancement()
+    reset_development_advancement()
+    initialize_replenishment()
     reset_retirement_scanning()
     reset_elite_pairings()
     all_fighters = [
@@ -129,6 +137,10 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
         winner, loser = simulate_fight(a, b, org="league", sim_day=current_day)
         result = winner.fight_history[-1]
 
+        # Win-triggered development boost — fires on the BASE fighter object (not the
+        # effective copy used inside fight resolution), so the gain is durable.
+        apply_win_development_boost(winner)
+
         # Apply tier transitions, label updates,
         # retirement (checked first), then cut (skips already-retired fighters).
         # Age advancement is now global (advance_all_ages below) -- not per-fight.
@@ -156,6 +168,13 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
 
         # Age all fighters once per SIM_DAYS_PER_YEAR — inactive fighters age too.
         advance_all_ages(all_fighters)
+        # Development sweeps the same cadence; called after age so age_factor reflects
+        # the just-incremented age (fighters who turned 23 this year get age_factor=0).
+        advance_all_development(all_fighters)
+
+        # Academy replenishment: generate prospects from academies whose schedule
+        # has elapsed, and run the quarterly population floor backstop.
+        run_replenishment(pools, all_fighters)
 
         # Biannual scan: retire fighters inactive for >= RETIRE_INACTIVE_GAP_DAYS.
         newly_retired = maybe_retire_inactive(all_fighters, pools, fight_num=i + 1)
@@ -179,6 +198,7 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
                 else:
                     _ewc, _etier, _eday = _ae.weight_class, _ae.tier, get_sim_day()
                     _ew, _el = simulate_fight(_ae, _be, org="exhibition", sim_day=_eday)
+                    apply_win_development_boost(_ew)
                     _erm: list = []
                     for _ef in (_ew, _el):
                         apply_tier_transitions(_ef, pools)
@@ -194,6 +214,7 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
                                          fight_num=i + 1, all_fighters=all_fighters)
                     advance_sim_clock()
                     advance_all_ages(all_fighters)
+                    advance_all_development(all_fighters)
 
         if debug:
             a_won = winner is a
@@ -683,6 +704,55 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
                 )
 
         console.print()
+
+    # -- Academy Replenishment Summary ----------------------------------------
+    console.print()
+    backstop_events = get_backstop_log()
+    n_backstop_total = sum(e.count for e in backstop_events)
+    console.print(Rule(
+        f"[bold]Academy Replenishment[/bold]  "
+        f"[dim]({len(backstop_events)} backstop events  |  {n_backstop_total} backstop fighters spawned)[/dim]"
+    ))
+    console.print()
+
+    # Per-weight-class totals and year-by-year tier distribution
+    for wc in WEIGHT_CLASSES:
+        norm_total, bs_total = get_total_generated(wc)
+        console.print(
+            f"  [bold]{wc.title()}[/bold]  "
+            f"[dim]{norm_total} academy prospects  |  {bs_total} backstop[/dim]"
+        )
+        history = get_replenishment_history(wc)
+        if history:
+            console.print(f"  [dim]  {'Year':>4}  {'Norm':>5}  {'BS':>4}  "
+                          f"{'Raw':>5}  {'Dev':>5}  {'HiUp':>5}  {'Elite':>5}[/dim]")
+            for rec in history:
+                td = rec["tier_dist"]
+                console.print(
+                    f"  [dim]  {rec['year']:>4}  {rec['normal']:>5}  {rec['backstop']:>4}  "
+                    f"{td.get('raw',0):>5}  {td.get('developing',0):>5}  "
+                    f"{td.get('high_upside',0):>5}  {td.get('elite',0):>5}[/dim]"
+                )
+        console.print()
+
+    # Population at end of run vs floor thresholds
+    console.print(f"  [dim]Final population vs floor thresholds:[/dim]")
+    _tier_short = {"tier0":"Amateur","tier1":"Regional","tier2":"Mid-maj",
+                   "tier3":"Top-org","tier4":"Elite"}
+    header = f"  [dim]  {'':12}" + "".join(f"  {_tier_short[t]:>8}" for t in TIER_LEVELS) + "[/dim]"
+    console.print(header)
+    for wc in WEIGHT_CLASSES:
+        row_parts = []
+        for t in TIER_LEVELS:
+            n   = len(pools[wc][t])
+            fl  = FLOOR_THRESHOLDS[t]
+            tag = "[yellow]" if n < fl else ""
+            end = "[/yellow]" if n < fl else ""
+            row_parts.append(f"  {tag}{n:>8}{end}")
+        console.print(f"  [dim]  {_WC_SHORT[wc]:<12}[/dim]" + "".join(row_parts))
+    floor_row = "".join(f"  {'(>='+str(FLOOR_THRESHOLDS[t])+')'!s:>9}" for t in TIER_LEVELS)
+    console.print(f"  [dim]  {'floor':12}{floor_row}[/dim]")
+    console.print()
 
 
 def main() -> None:

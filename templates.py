@@ -4,6 +4,7 @@ import random
 
 from fighter import Fighter
 from academies import pick_academy, regional_name, reset_name_registry
+from development import assign_prospect_tier
 
 
 # ─── Template config ──────────────────────────────────────────────────────────
@@ -124,6 +125,7 @@ def generate_fighter(template_name: str) -> Fighter:
         region=_TEMPLATE_REGIONS[template_name],
         template=template_name,
         academy=academy.name,
+        prospect_tier=assign_prospect_tier(),
         hype=_sample_hype(attrs["power"], attrs["athleticism"]) + academy.pipeline_strength,
         **attrs,
     )
