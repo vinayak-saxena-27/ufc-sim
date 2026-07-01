@@ -43,6 +43,7 @@ from sim_calendar import reset_sim_clock, advance_sim_clock, get_sim_day, SIM_DA
 from replenishment import (
     initialize_replenishment, run_replenishment,
     get_replenishment_history, get_backstop_log, get_event_log, get_total_generated,
+    get_inflow_counts,
     FLOOR_THRESHOLDS,
 )
 
@@ -717,19 +718,21 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
 
     # Per-weight-class totals and year-by-year tier distribution
     for wc in WEIGHT_CLASSES:
-        norm_total, bs_total = get_total_generated(wc)
+        counts = get_inflow_counts(wc)
         console.print(
             f"  [bold]{wc.title()}[/bold]  "
-            f"[dim]{norm_total} academy prospects  |  {bs_total} backstop[/dim]"
+            f"[dim]{counts['academy']} academy  |  {counts['backstop']} backstop  |  "
+            f"{counts['crossover']} crossover  |  {counts['lateral']} lateral[/dim]"
         )
         history = get_replenishment_history(wc)
         if history:
-            console.print(f"  [dim]  {'Year':>4}  {'Norm':>5}  {'BS':>4}  "
+            console.print(f"  [dim]  {'Year':>4}  {'Norm':>5}  {'BS':>4}  {'XO':>4}  {'Lat':>4}  "
                           f"{'Raw':>5}  {'Dev':>5}  {'HiUp':>5}  {'Elite':>5}[/dim]")
             for rec in history:
                 td = rec["tier_dist"]
                 console.print(
                     f"  [dim]  {rec['year']:>4}  {rec['normal']:>5}  {rec['backstop']:>4}  "
+                    f"{rec.get('crossover',0):>4}  {rec.get('lateral',0):>4}  "
                     f"{td.get('raw',0):>5}  {td.get('developing',0):>5}  "
                     f"{td.get('high_upside',0):>5}  {td.get('elite',0):>5}[/dim]"
                 )

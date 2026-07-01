@@ -51,6 +51,7 @@ from academies import ACADEMIES, ACADEMY_PIPELINE, Academy
 from tiers import TIER_LEVELS, WEIGHT_CLASSES, generate_tier_fighter
 from age import SIM_DAYS_PER_YEAR
 from sim_calendar import get_sim_day
+from inflow import generate_crossover, generate_lateral
 
 # ── Rate constants ────────────────────────────────────────────────────────────
 
@@ -87,6 +88,15 @@ BACKSTOP_CHECK_INTERVAL: int = 90  # sim days between floor scans (~quarterly)
 
 # Tier order for backstop processing: Elite first (most critical).
 _BACKSTOP_TIER_ORDER: list[str] = ["tier4", "tier3", "tier2", "tier1", "tier0"]
+
+# ── Crossover / lateral rate constants ───────────────────────────────────────
+# Both use a single global Poisson process (one next-day across the entire sim).
+# First-pass rates; tune once long-run inflow is observed.
+
+# Mean 150 days -> ~2.4 crossovers/year total across all weight classes.
+_CROSSOVER_INTERVAL: int = 150
+# Mean 80 days -> ~4.6 laterals/year total across all weight classes.
+_LATERAL_INTERVAL: int = 80
 
 # ── Event log cap ─────────────────────────────────────────────────────────────
 _EVENT_LOG_CAP: int = 5000  # stop appending after this many events (memory safety)
@@ -130,11 +140,13 @@ class BackstopEntry:
 
 _next_prospect_day: dict[str, int] = {}      # academy_name -> next sim_day to generate
 _last_backstop_day: int = 0
+_next_crossover_day: int = 0
+_next_lateral_day: int = 0
 
 _event_log:   list[ReplenishmentEvent] = []
 _backstop_log: list[BackstopEntry]    = []
 
-# {weight_class: {sim_year: {"normal": int, "backstop": int, "tier_dist": {...}}}}
+# {weight_class: {sim_year: {"normal": int, "backstop": int, "crossover": int, "lateral": int, "tier_dist": {...}}}}
 _yearly_history: dict[str, dict[int, dict]] = {}
 
 
@@ -162,17 +174,25 @@ def _sim_year(sim_day: int) -> int:
     return sim_day // SIM_DAYS_PER_YEAR
 
 
+_SOURCE_HISTORY_KEY: dict[str, str] = {
+    "academy":   "normal",
+    "backstop":  "backstop",
+    "crossover": "crossover",
+    "lateral":   "lateral",
+}
+
+
 def _record_history(wc: str, sim_day: int, prospect_tier: str, source: str) -> None:
     yr = _sim_year(sim_day)
     if wc not in _yearly_history:
         _yearly_history[wc] = {}
     if yr not in _yearly_history[wc]:
         _yearly_history[wc][yr] = {
-            "normal": 0, "backstop": 0,
+            "normal": 0, "backstop": 0, "crossover": 0, "lateral": 0,
             "tier_dist": {"raw": 0, "developing": 0, "high_upside": 0, "elite": 0},
         }
     rec = _yearly_history[wc][yr]
-    rec["normal" if source == "academy" else "backstop"] += 1
+    rec[_SOURCE_HISTORY_KEY.get(source, "normal")] += 1
     td = rec["tier_dist"]
     td[prospect_tier] = td.get(prospect_tier, 0) + 1
 
@@ -216,15 +236,17 @@ def initialize_replenishment() -> None:
 
     First-day values are staggered across [0, mean_interval] per academy so that
     the pipeline feels mid-cycle at startup rather than all 15 academies firing
-    simultaneously on day 1.
+    simultaneously on day 1. Crossover and lateral first-days are also staggered.
     """
-    global _next_prospect_day, _last_backstop_day
+    global _next_prospect_day, _last_backstop_day, _next_crossover_day, _next_lateral_day
 
     _next_prospect_day.clear()
     _event_log.clear()
     _backstop_log.clear()
     _yearly_history.clear()
     _last_backstop_day = 0
+    _next_crossover_day = round(random.uniform(0.0, _CROSSOVER_INTERVAL))
+    _next_lateral_day   = round(random.uniform(0.0, _LATERAL_INTERVAL))
 
     for _template, academy in _ACADEMY_TEMPLATES:
         mean = _mean_interval(academy.name)
@@ -298,14 +320,96 @@ def _check_backstop(
                        pools, all_fighters, current_day, "backstop")
 
 
+# ── Crossover and lateral transfer generation ─────────────────────────────────
+
+def _check_crossover_generation(
+    pools: dict,
+    all_fighters: list[Fighter],
+) -> None:
+    """Generate a crossover athlete if the scheduled day has arrived."""
+    global _next_crossover_day
+    current_day = get_sim_day()
+    if current_day < _next_crossover_day:
+        return
+
+    wc = random.choice(WEIGHT_CLASSES)
+    fighter, sport, caliber = generate_crossover(wc)
+
+    pools[wc][fighter.tier].append(fighter)
+    all_fighters.append(fighter)
+
+    print(
+        f"  [CROSSOVER] d{current_day}  {wc} {fighter.tier}: "
+        f"{sport} ({caliber}) -- {fighter.name} "
+        f"ovr={fighter.overall:+.1f}  hype={fighter.hype:+.1f}  pt={fighter.prospect_tier}"
+    )
+
+    if len(_event_log) < _EVENT_LOG_CAP:
+        _event_log.append(ReplenishmentEvent(
+            sim_day       = current_day,
+            academy_name  = fighter.academy,
+            template_name = fighter.template,
+            weight_class  = wc,
+            tier_key      = fighter.tier,
+            prospect_tier = fighter.prospect_tier,
+            fighter_name  = fighter.name,
+            overall       = fighter.overall,
+            source        = "crossover",
+        ))
+
+    _record_history(wc, current_day, fighter.prospect_tier, "crossover")
+    _next_crossover_day = current_day + max(1, round(random.expovariate(1.0 / _CROSSOVER_INTERVAL)))
+
+
+def _check_lateral_generation(
+    pools: dict,
+    all_fighters: list[Fighter],
+) -> None:
+    """Generate a lateral-transfer fighter if the scheduled day has arrived."""
+    global _next_lateral_day
+    current_day = get_sim_day()
+    if current_day < _next_lateral_day:
+        return
+
+    wc = random.choice(WEIGHT_CLASSES)
+    fighter, tier_key = generate_lateral(wc)
+
+    pools[wc][tier_key].append(fighter)
+    all_fighters.append(fighter)
+
+    print(
+        f"  [LATERAL]   d{current_day}  {wc} {tier_key}: "
+        f"{fighter.template} -- {fighter.name} "
+        f"ovr={fighter.overall:+.1f}  hype={fighter.hype:+.1f}  pt={fighter.prospect_tier}"
+    )
+
+    if len(_event_log) < _EVENT_LOG_CAP:
+        _event_log.append(ReplenishmentEvent(
+            sim_day       = current_day,
+            academy_name  = fighter.academy,
+            template_name = fighter.template,
+            weight_class  = wc,
+            tier_key      = tier_key,
+            prospect_tier = fighter.prospect_tier,
+            fighter_name  = fighter.name,
+            overall       = fighter.overall,
+            source        = "lateral",
+        ))
+
+    _record_history(wc, current_day, fighter.prospect_tier, "lateral")
+    _next_lateral_day = current_day + max(1, round(random.expovariate(1.0 / _LATERAL_INTERVAL)))
+
+
 # ── Combined tick function (called from sim.py) ───────────────────────────────
 
 def run_replenishment(pools: dict, all_fighters: list[Fighter]) -> None:
     """
     Called once per sim tick (after advance_sim_clock).
-    Runs academy generation check and periodic backstop floor scan.
+    Runs academy generation, crossover/lateral inflow checks, and the backstop floor scan.
     """
     _check_academy_generation(pools, all_fighters)
+    _check_crossover_generation(pools, all_fighters)
+    _check_lateral_generation(pools, all_fighters)
     _check_backstop(pools, all_fighters)
 
 
@@ -341,6 +445,20 @@ def get_total_generated(weight_class: str) -> tuple[int, int]:
     """Return (normal_total, backstop_total) for a weight class across all years."""
     normal = backstop = 0
     for rec in _yearly_history.get(weight_class, {}).values():
-        normal   += rec["normal"]
-        backstop += rec["backstop"]
+        normal   += rec.get("normal", 0)
+        backstop += rec.get("backstop", 0)
     return normal, backstop
+
+
+def get_inflow_counts(weight_class: str) -> dict[str, int]:
+    """
+    Return per-source fighter count for a weight class across all sim years.
+    Keys: "academy", "backstop", "crossover", "lateral".
+    """
+    counts: dict[str, int] = {"academy": 0, "backstop": 0, "crossover": 0, "lateral": 0}
+    for rec in _yearly_history.get(weight_class, {}).values():
+        counts["academy"]   += rec.get("normal", 0)
+        counts["backstop"]  += rec.get("backstop", 0)
+        counts["crossover"] += rec.get("crossover", 0)
+        counts["lateral"]   += rec.get("lateral", 0)
+    return counts
