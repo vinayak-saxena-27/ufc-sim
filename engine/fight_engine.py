@@ -23,7 +23,7 @@ from career.fighter import Fighter
 from engine.phase_engine import Phase, simulate_round, TICKS_PER_ROUND, TICK_SECONDS
 from career.tiers import TIER_RULESET
 from engine.phase_output import compute_round_output
-from engine.finish_check import FinishEvent, check_finish
+from engine.finish_check import FinishEvent, check_finish, pressure_snapshot
 from engine.fatigue import FatigueState, fresh_fatigue, apply_fatigue_to_fighter, update_fatigue
 
 
@@ -53,6 +53,16 @@ class RoundResult:
     time_in_phase:   dict[str, float]
     n_segments:      int            # how many segments ran before finish or time
     finish_event:    FinishEvent | None   # None if the round went to time
+    # Recency-weighted finish-pressure at the END of this round's accumulated
+    # segments (i.e. this round's peak, since pressure is monotonically
+    # non-decreasing within a round). Pure read via finish_check.pressure_snapshot()
+    # on the same segment list check_finish() already walks -- does not change how
+    # pressure accumulates. sub_pressure includes cross-round carry-over (matches
+    # what check_finish evaluated); strike_pressure resets each round (no carry).
+    strike_pressure_a: float = 0.0
+    strike_pressure_b: float = 0.0
+    sub_pressure_a:     float = 0.0
+    sub_pressure_b:     float = 0.0
 
 
 @dataclass
@@ -131,6 +141,11 @@ def _run_round(
     end_wsub_a = prior_sub_a + sum(s.sub_pressure_a * s.recency_weight for s in accumulated)
     end_wsub_b = prior_sub_b + sum(s.sub_pressure_b * s.recency_weight for s in accumulated)
 
+    # Strike pressure at round end (no cross-round carry-over, unlike sub) --
+    # a pure read of the same accumulated-segment data check_finish() already
+    # walked; does not touch how pressure is computed.
+    snap = pressure_snapshot(accumulated)
+
     result = RoundResult(
         round_num     = round_num,
         score_a       = score_a,
@@ -142,6 +157,10 @@ def _run_round(
         time_in_phase = timeline.time_in_phase,
         n_segments    = len(accumulated),
         finish_event  = finish,
+        strike_pressure_a = snap["strike_a"],
+        strike_pressure_b = snap["strike_b"],
+        sub_pressure_a     = end_wsub_a,
+        sub_pressure_b     = end_wsub_b,
     )
     return result, finish, end_wsub_a, end_wsub_b
 

@@ -5,11 +5,12 @@ from dataclasses import dataclass
 from statistics import mean as _mean
 
 from career.fighter import Fighter
-from career.templates import TEMPLATES, _TEMPLATE_REGIONS, _sample_hype
+from career.templates import TEMPLATES, _TEMPLATE_REGIONS
 from career.academies import pick_academy, regional_name, reset_name_registry, Academy
 from career.development import assign_prospect_tier
 from career.weight_cut import generate_cut_severity
 from career.style_mixing import generate_style_flexibility
+from career.hype import generate_hype_seed
 
 # ─── Tuning constants ─────────────────────────────────────────────────────────
 # Per-attribute noise added on top of the template shape offset.
@@ -158,7 +159,7 @@ def generate_tier_fighter(
         weight_class=weight_class,
         academy=academy.name,
         prospect_tier=assign_prospect_tier(),
-        hype=_sample_hype(attrs["power"], attrs["athleticism"]) + academy.pipeline_strength,
+        hype=generate_hype_seed(academy.pipeline_strength),
         cut_severity=generate_cut_severity(attrs["power"], attrs["athleticism"], weight_class),
         style_flexibility=generate_style_flexibility(attrs["fight_iq"], template_name),
         **attrs,

@@ -250,6 +250,13 @@ def get_ranked_ids() -> set[str]:
     return _ranked_ids
 
 
+def is_ranked(fighter: Fighter) -> bool:
+    """True if fighter is currently in any weight class's top-15. Pure accessor
+    over get_ranked_ids() -- does not touch ranking computation. Used by
+    career/hype.py to scale win hype by opponent quality."""
+    return fighter.fighter_id in _ranked_ids
+
+
 def reset_rankings() -> None:
     """Clear all cached rankings and the ranked-id set. Call at sim start."""
     _rankings_by_wc.clear()

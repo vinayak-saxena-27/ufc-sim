@@ -35,6 +35,9 @@ from career.development import (
     advance_all_development, apply_win_development_boost,
     apply_phase_development_feedback, reset_development_advancement,
 )
+from career.hype import (
+    update_hype_after_fight, advance_all_hype_decay, reset_hype_decay,
+)
 from career.cuts import maybe_evaluate_cut, get_cut_log, reset_cut_registry
 from career.retirement import maybe_evaluate_retirement, maybe_retire_inactive, reset_retirement_scanning
 from career.weight_movement import maybe_evaluate_weight_move
@@ -96,6 +99,7 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
     reset_sim_clock()
     reset_age_advancement()
     reset_development_advancement()
+    reset_hype_decay()
     initialize_replenishment()
     reset_retirement_scanning()
     reset_elite_pairings()
@@ -154,6 +158,9 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
         # non-primary-phase time exposure for this fight (see development.py).
         apply_phase_development_feedback(winner)
         apply_phase_development_feedback(loser)
+        # Dynamic hype: base win/loss + style modifiers for both participants.
+        update_hype_after_fight(winner, loser)
+        update_hype_after_fight(loser, winner)
 
         # Apply tier transitions, label updates,
         # retirement (checked first), then cut (skips already-retired fighters).
@@ -188,6 +195,9 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
         # Development sweeps the same cadence; called after age so age_factor reflects
         # the just-incremented age (fighters who turned 23 this year get age_factor=0).
         advance_all_development(all_fighters)
+        # Hype decay: same annual cadence -- inactive fighters (including those who
+        # went quiet) lose buzz proportionally.
+        advance_all_hype_decay(all_fighters)
 
         # Advance any active win-and-vacate campaigns (weight_transfers.py) by one
         # directly-simulated fight each — self-initiated events, not triggered by
@@ -223,6 +233,8 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
                     apply_win_development_boost(_ew)
                     apply_phase_development_feedback(_ew)
                     apply_phase_development_feedback(_el)
+                    update_hype_after_fight(_ew, _el)
+                    update_hype_after_fight(_el, _ew)
                     _erm: list = []
                     for _ef in (_ew, _el):
                         apply_tier_transitions(_ef, pools)
@@ -239,6 +251,7 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
                     advance_sim_clock()
                     advance_all_ages(all_fighters)
                     advance_all_development(all_fighters)
+                    advance_all_hype_decay(all_fighters)
 
         if debug:
             a_won = winner is a

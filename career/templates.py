@@ -6,6 +6,7 @@ from career.fighter import Fighter
 from career.academies import pick_academy, regional_name, reset_name_registry
 from career.development import assign_prospect_tier
 from career.style_mixing import generate_style_flexibility
+from career.hype import generate_hype_seed
 
 
 # ─── Template config ──────────────────────────────────────────────────────────
@@ -103,14 +104,6 @@ _TEMPLATE_REGIONS: dict[str, str] = {
 }
 
 
-def _sample_hype(power: float, athleticism: float) -> float:
-    # Crude proxy: finishing-capable and explosive fighters draw more attention.
-    # TODO: Real hype system tracks finishes, upsets, social reach, and media coverage
-    #       independently of true skill — gap between hype and skill drives promotion
-    #       speed and matchmaking priority in later sessions.
-    return 0.4 * power + 0.3 * athleticism + random.gauss(0.0, 10.0)
-
-
 def generate_fighter(template_name: str) -> Fighter:
     """Samples one fighter from the given template distribution."""
     academy = pick_academy(template_name)
@@ -127,7 +120,7 @@ def generate_fighter(template_name: str) -> Fighter:
         template=template_name,
         academy=academy.name,
         prospect_tier=assign_prospect_tier(),
-        hype=_sample_hype(attrs["power"], attrs["athleticism"]) + academy.pipeline_strength,
+        hype=generate_hype_seed(academy.pipeline_strength),
         style_flexibility=generate_style_flexibility(attrs["fight_iq"], template_name),
         **attrs,
     )

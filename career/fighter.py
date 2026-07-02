@@ -30,6 +30,11 @@ class FightResult:
     time_standing:    float = 0.0
     time_clinch:      float = 0.0
     time_ground:      float = 0.0
+    # True if the WINNER survived meaningful finish-danger (received pressure
+    # crossed a threshold fraction at some point) and still won. Winner's record
+    # only -- a loser's FightResult never sets this. See engine/fight.py and
+    # career/hype.py (style-to-hype overhaul session).
+    adversity_comeback: bool = False
 
 
 @dataclass
