@@ -210,6 +210,64 @@ def apply_win_development_boost(fighter: Fighter) -> None:
     fighter.development_modifier += boost
 
 
+# ── Style-mixing development feedback (voluntary style-mixing session) ────────
+# Fighters who spend meaningful time outside their natural dominant phase pick
+# up a small amount of extra development from that fight experience — smaller
+# than the win boost (camp time remains the primary driver; a single fight's
+# worth of reps is a supplement), and fires regardless of outcome (you learn
+# from time spent in a phase whether you win or lose).
+#
+# This reuses development_modifier and its existing technical(1.3x)/mixed(1.0x)/
+# physical(0.6x) attribute multipliers rather than adding phase-specific
+# attribute storage — consistent with the session's one-new-field budget
+# (style_flexibility). The boost is gated on non-primary-phase exposure but,
+# once it fires, develops the fighter broadly like any other development gain.
+
+_PHASE_DEV_TIME_THRESHOLD: float = 0.22
+"""Fraction of total fight time spent outside the fighter's primary phase
+required to qualify for the feedback boost. First-pass tuning constant."""
+
+_PHASE_DEV_BOOST_SCALE: float = 0.5
+"""Phase-feedback boost = _WIN_BOOST[tier] * this scale — deliberately smaller
+than the win-triggered boost. First-pass tuning constant."""
+
+
+def apply_phase_development_feedback(fighter: Fighter) -> None:
+    """
+    Small additional development_modifier boost when `fighter` spent meaningful
+    time (>= _PHASE_DEV_TIME_THRESHOLD of the fight) in a phase other than their
+    own natural dominant one. Reads fighter.fight_history[-1] (must be called
+    right after simulate_fight() records the result) for the shared phase-time
+    breakdown. Fires on win OR loss.
+
+    "Primary phase" = whichever of STANDING/CLINCH/GROUND the fighter's own
+    attribute profile would most aggressively pursue absent style-mixing —
+    engine.phase_engine.primary_phase() is the single canonical definition,
+    reused here via a local import to avoid a top-level career<->engine cycle
+    (same pattern as the local import in engine/fight.py's simulate_fight()).
+    """
+    if not fighter.fight_history:
+        return
+    result = fighter.fight_history[-1]
+    total_time = result.time_standing + result.time_clinch + result.time_ground
+    if total_time <= 0.0:
+        return
+
+    from engine.phase_engine import primary_phase, Phase
+
+    time_by_phase = {
+        Phase.STANDING: result.time_standing,
+        Phase.CLINCH:   result.time_clinch,
+        Phase.GROUND:   result.time_ground,
+    }
+    non_primary_time = total_time - time_by_phase[primary_phase(fighter)]
+    if non_primary_time / total_time < _PHASE_DEV_TIME_THRESHOLD:
+        return
+
+    boost = _WIN_BOOST.get(fighter.prospect_tier, _WIN_BOOST["developing"]) * _PHASE_DEV_BOOST_SCALE
+    fighter.development_modifier += boost
+
+
 # ── Time-based global development advancement ─────────────────────────────────
 
 _last_dev_advance_day: int = 0

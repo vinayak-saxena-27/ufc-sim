@@ -31,7 +31,10 @@ from matchmaking import (
 from career.labels import maybe_update_labels, reset_title_registry, update_labels, get_champion_id, CONTENDER
 from title import reset_title_scheduling, maybe_run_title_fight, get_title_history, TITLE_FIGHT_INTERVAL
 from career.age import advance_all_ages, reset_age_advancement
-from career.development import advance_all_development, apply_win_development_boost, reset_development_advancement
+from career.development import (
+    advance_all_development, apply_win_development_boost,
+    apply_phase_development_feedback, reset_development_advancement,
+)
 from career.cuts import maybe_evaluate_cut, get_cut_log, reset_cut_registry
 from career.retirement import maybe_evaluate_retirement, maybe_retire_inactive, reset_retirement_scanning
 from career.weight_movement import maybe_evaluate_weight_move
@@ -147,6 +150,10 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
         # Win-triggered development boost — fires on the BASE fighter object (not the
         # effective copy used inside fight resolution), so the gain is durable.
         apply_win_development_boost(winner)
+        # Style-mixing feedback: fires for both winner and loser, gated on
+        # non-primary-phase time exposure for this fight (see development.py).
+        apply_phase_development_feedback(winner)
+        apply_phase_development_feedback(loser)
 
         # Apply tier transitions, label updates,
         # retirement (checked first), then cut (skips already-retired fighters).
@@ -214,6 +221,8 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
                     _ewc, _etier, _eday = _ae.weight_class, _ae.tier, get_sim_day()
                     _ew, _el = simulate_fight(_ae, _be, org="exhibition", sim_day=_eday)
                     apply_win_development_boost(_ew)
+                    apply_phase_development_feedback(_ew)
+                    apply_phase_development_feedback(_el)
                     _erm: list = []
                     for _ef in (_ew, _el):
                         apply_tier_transitions(_ef, pools)

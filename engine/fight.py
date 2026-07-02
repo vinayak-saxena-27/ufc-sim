@@ -83,6 +83,13 @@ def simulate_fight(
     # For finishes the scores are partial-round, but stored for completeness.
     a_margin       = outcome.total_score_a - outcome.total_score_b
     rounds_n       = len(outcome.rounds)
+
+    # Phase-distribution summary, shared by both fighters (single timeline, not
+    # per-fighter) -- feeds the style-mixing development feedback hook.
+    time_standing = sum(r.time_in_phase.get("STANDING", 0.0) for r in outcome.rounds)
+    time_clinch   = sum(r.time_in_phase.get("CLINCH",   0.0) for r in outcome.rounds)
+    time_ground   = sum(r.time_in_phase.get("GROUND",   0.0) for r in outcome.rounds)
+
     winner.fight_history.append(FightResult(
         opponent_name    = loser.name,
         outcome          = "win",
@@ -93,6 +100,9 @@ def simulate_fight(
         is_title         = is_title,
         rounds_completed = rounds_n,
         sim_day          = sim_day,
+        time_standing    = time_standing,
+        time_clinch      = time_clinch,
+        time_ground      = time_ground,
     ))
     loser.fight_history.append(FightResult(
         opponent_name    = winner.name,
@@ -104,5 +114,8 @@ def simulate_fight(
         is_title         = is_title,
         rounds_completed = rounds_n,
         sim_day          = sim_day,
+        time_standing    = time_standing,
+        time_clinch      = time_clinch,
+        time_ground      = time_ground,
     ))
     return winner, loser

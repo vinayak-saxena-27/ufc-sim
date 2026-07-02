@@ -5,6 +5,7 @@ import random
 from career.fighter import Fighter
 from career.academies import pick_academy, regional_name, reset_name_registry
 from career.development import assign_prospect_tier
+from career.style_mixing import generate_style_flexibility
 
 
 # ─── Template config ──────────────────────────────────────────────────────────
@@ -127,6 +128,7 @@ def generate_fighter(template_name: str) -> Fighter:
         academy=academy.name,
         prospect_tier=assign_prospect_tier(),
         hype=_sample_hype(attrs["power"], attrs["athleticism"]) + academy.pipeline_strength,
+        style_flexibility=generate_style_flexibility(attrs["fight_iq"], template_name),
         **attrs,
     )
 
