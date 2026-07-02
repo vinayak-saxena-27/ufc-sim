@@ -87,8 +87,8 @@ from __future__ import annotations
 import random
 from dataclasses import replace
 
-from fighter import Fighter
-from age import _PRIME_START, _PRIME_END
+from career.fighter import Fighter
+from career.age import _PRIME_START, _PRIME_END
 
 # ── Generation constants (Part 1) ───────────────────────────────────────────
 
@@ -184,7 +184,7 @@ def apply_cut_to_fighter(fighter: Fighter) -> Fighter:
 # ── Demo (run as __main__) ───────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    from tiers import generate_tier_fighter, TIER_LEVELS
+    from career.tiers import generate_tier_fighter, TIER_LEVELS
 
     random.seed(11)
 

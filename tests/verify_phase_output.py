@@ -17,11 +17,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import sys
 
-from fighter import Fighter
-from phase_engine import (
+from career.fighter import Fighter
+from engine.phase_engine import (
     Phase, TransitionType, TransitionAttempt, RoundTimeline,
 )
-from phase_output import compute_round_output, RoundOutput
+from engine.phase_output import compute_round_output, RoundOutput
 
 _failures: list[str] = []
 

@@ -37,9 +37,9 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field, replace
 
-from fighter import Fighter
-from phase_engine import MAX_STAMINA
-from fight import SCALE
+from career.fighter import Fighter
+from engine.phase_engine import MAX_STAMINA
+from engine.fight import SCALE
 
 SKILL_SCALE: float = SCALE  # must match phase_engine.py
 
@@ -192,8 +192,8 @@ def stamina_at_tick(
 
 if __name__ == "__main__":
     import random
-    from templates import generate_fighter
-    from phase_engine import simulate_round
+    from career.templates import generate_fighter
+    from engine.phase_engine import simulate_round
 
     random.seed(7)
     wres = generate_fighter("dagestan_sambo")

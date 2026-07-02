@@ -20,32 +20,32 @@ from rich.rule import Rule
 from rich.table import Table
 from rich.text import Text
 
-from fight import simulate_fight, SCALE
-from tiers import TIER_LEVELS, WEIGHT_CLASSES, generate_all_tiers
+from engine.fight import simulate_fight, SCALE
+from career.tiers import TIER_LEVELS, WEIGHT_CLASSES, generate_all_tiers
 from matchmaking import (
     pick_opponent, pick_scheduled_elite_a, apply_tier_transitions,
     reset_gate_stats, get_gate_stats,
     reset_elite_pairings, get_elite_pairings, ElitePairingRecord,
     ELITE_FIGHT_INTERVAL,
 )
-from labels import maybe_update_labels, reset_title_registry, update_labels, get_champion_id, CONTENDER
+from career.labels import maybe_update_labels, reset_title_registry, update_labels, get_champion_id, CONTENDER
 from title import reset_title_scheduling, maybe_run_title_fight, get_title_history, TITLE_FIGHT_INTERVAL
-from age import advance_all_ages, reset_age_advancement
-from development import advance_all_development, apply_win_development_boost, reset_development_advancement
-from cuts import maybe_evaluate_cut, get_cut_log, reset_cut_registry
-from retirement import maybe_evaluate_retirement, maybe_retire_inactive, reset_retirement_scanning
-from weight_movement import maybe_evaluate_weight_move
-from weight_transfers import (
+from career.age import advance_all_ages, reset_age_advancement
+from career.development import advance_all_development, apply_win_development_boost, reset_development_advancement
+from career.cuts import maybe_evaluate_cut, get_cut_log, reset_cut_registry
+from career.retirement import maybe_evaluate_retirement, maybe_retire_inactive, reset_retirement_scanning
+from career.weight_movement import maybe_evaluate_weight_move
+from career.weight_transfers import (
     maybe_process_weight_transfers, advance_campaigns,
     get_move_log, reset_weight_transfer_log,
 )
-from rankings import (
+from career.rankings import (
     update_rankings, get_rankings, reset_rankings,
     RANKINGS_UPDATE_INTERVAL, RANKINGS_SIZE,
     _W_WIN_RATE, _W_QUALITY, _W_HYPE,
 )
 from sim_calendar import reset_sim_clock, advance_sim_clock, get_sim_day, SIM_DAYS_PER_FIGHT
-from replenishment import (
+from career.replenishment import (
     initialize_replenishment, run_replenishment,
     get_replenishment_history, get_backstop_log, get_event_log, get_total_generated,
     get_inflow_counts,

@@ -21,17 +21,17 @@ import random
 import math
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from tiers import TIER_LEVELS, WEIGHT_CLASSES, generate_all_tiers
-from fighter import Fighter
-from replenishment import (
+from career.tiers import TIER_LEVELS, WEIGHT_CLASSES, generate_all_tiers
+from career.fighter import Fighter
+from career.replenishment import (
     initialize_replenishment, run_replenishment,
     get_event_log, get_backstop_log, get_replenishment_history, get_total_generated,
     FLOOR_THRESHOLDS, BASE_INTERVAL, _mean_interval,
     _check_backstop,
 )
 from sim_calendar import reset_sim_clock, advance_sim_clock, get_sim_day, SIM_DAYS_PER_FIGHT
-from age import advance_all_ages, reset_age_advancement, SIM_DAYS_PER_YEAR
-from development import advance_all_development, reset_development_advancement
+from career.age import advance_all_ages, reset_age_advancement, SIM_DAYS_PER_YEAR
+from career.development import advance_all_development, reset_development_advancement
 
 
 # -- Helpers ------------------------------------------------------------------
@@ -103,7 +103,7 @@ def check_1() -> bool:
 
     # Higher-pipeline academies should appear more often (relative rate check)
     # Over a full run, compare total events from best vs worst pipeline academy
-    from academies import ACADEMY_PIPELINE
+    from career.academies import ACADEMY_PIPELINE
     all_events = [e for e in events if e.source == "academy"]
     event_counts = {}
     for e in all_events:
@@ -258,7 +258,7 @@ def check_4() -> bool:
     initialize_replenishment()
 
     # Advance clock far enough to trigger backstop (needs BACKSTOP_CHECK_INTERVAL days)
-    from replenishment import BACKSTOP_CHECK_INTERVAL
+    from career.replenishment import BACKSTOP_CHECK_INTERVAL
     ticks = math.ceil(BACKSTOP_CHECK_INTERVAL / SIM_DAYS_PER_FIGHT) + 1
     for _ in range(ticks):
         advance_sim_clock()

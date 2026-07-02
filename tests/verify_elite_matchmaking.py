@@ -22,22 +22,22 @@ import random
 from collections import defaultdict
 from statistics import mean, median
 
-from fight import simulate_fight
-from tiers import generate_all_tiers
+from engine.fight import simulate_fight
+from career.tiers import generate_all_tiers
 from matchmaking import (
     pick_opponent, pick_scheduled_elite_a, apply_tier_transitions,
     reset_gate_stats, get_gate_stats,
     reset_elite_pairings, get_elite_pairings,
     ELITE_FIGHT_INTERVAL,
 )
-from labels import maybe_update_labels, reset_title_registry, update_labels
+from career.labels import maybe_update_labels, reset_title_registry, update_labels
 from title import reset_title_scheduling, maybe_run_title_fight
-from age import reset_age_advancement, advance_all_ages
-from cuts import maybe_evaluate_cut, reset_cut_registry
-from retirement import (
+from career.age import reset_age_advancement, advance_all_ages
+from career.cuts import maybe_evaluate_cut, reset_cut_registry
+from career.retirement import (
     maybe_evaluate_retirement, maybe_retire_inactive, reset_retirement_scanning,
 )
-from rankings import (
+from career.rankings import (
     update_rankings, get_rankings, get_ranked_ids, reset_rankings,
     RANKINGS_UPDATE_INTERVAL, RANKINGS_SIZE,
 )

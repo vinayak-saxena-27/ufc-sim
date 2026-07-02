@@ -12,8 +12,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import random
 
-from fighter import Fighter
-from phase_engine import (
+from career.fighter import Fighter
+from engine.phase_engine import (
     Phase, TransitionType,
     simulate_round,
     ROUND_SECONDS, SUCCESS_STAMINA_COST, FAIL_STAMINA_COST,

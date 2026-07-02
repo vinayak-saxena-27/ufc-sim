@@ -56,7 +56,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from fighter import Fighter, FightResult
+from career.fighter import Fighter, FightResult
 
 # ── Part 1: Gate constants ────────────────────────────────────────────────────
 
@@ -319,7 +319,7 @@ def is_eligible_vs_ranked(fighter: Fighter) -> bool:
 # ── Calibration test ──────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    from fighter import Fighter, FightResult
+    from career.fighter import Fighter, FightResult
 
     def _make_fighter(name: str, hype: float = 30.0) -> Fighter:
         f = Fighter(

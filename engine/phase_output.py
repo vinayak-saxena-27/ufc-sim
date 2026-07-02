@@ -20,9 +20,9 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from fighter import Fighter
-from phase_engine import Phase, RoundTimeline
-from fight import SCALE
+from career.fighter import Fighter
+from engine.phase_engine import Phase, RoundTimeline
+from engine.fight import SCALE
 
 # Must match phase_engine.py -- kept local for module self-containment.
 SKILL_SCALE:     float = SCALE   # 43.0 -- sub-attribute logistic steepness
@@ -403,8 +403,8 @@ def compute_round_output(
 
 if __name__ == "__main__":
     import random
-    from templates import generate_fighter
-    from phase_engine import simulate_round
+    from career.templates import generate_fighter
+    from engine.phase_engine import simulate_round
 
     random.seed(7)
     wres = generate_fighter("dagestan_sambo")

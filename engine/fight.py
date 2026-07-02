@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import random
 
-from fighter import Fighter, FightResult
-from age import apply_age_to_fighter
-from development import apply_development_to_fighter
-from weight_cut import apply_cut_to_fighter
+from career.fighter import Fighter, FightResult
+from career.age import apply_age_to_fighter
+from career.development import apply_development_to_fighter
+from career.weight_cut import apply_cut_to_fighter
 
 # ─── Tuning constants ─────────────────────────────────────────────────────────
 # Adjust these after reading smoke_test.py output.
@@ -61,7 +61,7 @@ def simulate_fight(
     win_probability() is preserved above for smoke_test.py calibration runs; it is
     no longer called from here.
     """
-    from fight_engine import simulate_full_fight
+    from engine.fight_engine import simulate_full_fight
 
     # Apply modifier layers before entering the engine (order matters for readability
     # and matches the fight-night timeline, not for correctness — all three deltas are

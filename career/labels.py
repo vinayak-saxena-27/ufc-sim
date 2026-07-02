@@ -33,8 +33,8 @@ only on the 5th, 10th, 15th... fight, keeping the per-fight overhead minimal.
 """
 from __future__ import annotations
 
-from fighter import Fighter
-from tiers import TIER_LEVELS
+from career.fighter import Fighter
+from career.tiers import TIER_LEVELS
 
 # ── Label name constants ───────────────────────────────────────────────────────
 
@@ -325,8 +325,8 @@ def maybe_update_labels(fighter: Fighter) -> None:
 
 if __name__ == "__main__":
     import random
-    from tiers import generate_all_tiers, WEIGHT_CLASSES
-    from fight import simulate_fight
+    from career.tiers import generate_all_tiers, WEIGHT_CLASSES
+    from engine.fight import simulate_fight
     from matchmaking import pick_opponent, apply_tier_transitions
 
     random.seed(77)

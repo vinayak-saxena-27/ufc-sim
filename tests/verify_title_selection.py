@@ -31,23 +31,23 @@ _FAIL = "FAIL"
 
 random.seed(SEED)
 
-from tiers        import generate_all_tiers
+from career.tiers        import generate_all_tiers
 from matchmaking  import (
     pick_opponent, pick_scheduled_elite_a,
     apply_tier_transitions, reset_gate_stats, reset_elite_pairings,
     ELITE_FIGHT_INTERVAL,
 )
-from fight        import simulate_fight
-from labels       import maybe_update_labels, reset_title_registry
-from retirement   import maybe_evaluate_retirement, maybe_retire_inactive, reset_retirement_scanning
-from cuts         import maybe_evaluate_cut, reset_cut_registry
-from rankings     import update_rankings, get_rankings, get_ranked_ids, reset_rankings, RANKINGS_UPDATE_INTERVAL
+from engine.fight        import simulate_fight
+from career.labels       import maybe_update_labels, reset_title_registry
+from career.retirement   import maybe_evaluate_retirement, maybe_retire_inactive, reset_retirement_scanning
+from career.cuts         import maybe_evaluate_cut, reset_cut_registry
+from career.rankings     import update_rankings, get_rankings, get_ranked_ids, reset_rankings, RANKINGS_UPDATE_INTERVAL
 from title        import (
     maybe_run_title_fight, reset_title_scheduling, get_title_history,
     TitleFightRecord,
 )
 from sim_calendar import advance_sim_clock, get_sim_day, reset_sim_clock
-from age          import advance_all_ages, reset_age_advancement
+from career.age          import advance_all_ages, reset_age_advancement
 
 # Build initial population and pool structure
 pools = generate_all_tiers(scale=1.0)

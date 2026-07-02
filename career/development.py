@@ -63,11 +63,11 @@ from __future__ import annotations
 import dataclasses
 import random
 
-from fighter import Fighter
-from academies import ACADEMY_PIPELINE
+from career.fighter import Fighter
+from career.academies import ACADEMY_PIPELINE
 # _PRIME_START reuse is intentional: keeps both development and age systems
 # anchored to the same prime-start constant so they remain coherent.
-from age import _PRIME_START, SIM_DAYS_PER_YEAR
+from career.age import _PRIME_START, SIM_DAYS_PER_YEAR
 from sim_calendar import get_sim_day
 
 # ── Prospect tier assignment ──────────────────────────────────────────────────

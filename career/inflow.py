@@ -23,11 +23,11 @@ from __future__ import annotations
 import random
 from statistics import mean as _mean
 
-from fighter import Fighter
-from templates import TEMPLATES, _TEMPLATE_REGIONS, _sample_hype
-from tiers import TIER_CONFIG, ATTR_NOISE_STD
-from academies import pick_academy, regional_name
-from development import assign_prospect_tier
+from career.fighter import Fighter
+from career.templates import TEMPLATES, _TEMPLATE_REGIONS, _sample_hype
+from career.tiers import TIER_CONFIG, ATTR_NOISE_STD
+from career.academies import pick_academy, regional_name
+from career.development import assign_prospect_tier
 
 
 # ── Crossover sport profiles ──────────────────────────────────────────────────

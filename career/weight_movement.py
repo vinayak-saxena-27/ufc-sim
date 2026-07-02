@@ -86,12 +86,12 @@ from __future__ import annotations
 
 import random
 
-from fighter import Fighter
-from tiers import WEIGHT_CLASSES, TIER_RULESET
-from labels import CHAMPION, CONTENDER, WASHED, LABEL_UPDATE_INTERVAL, get_champion_id
-from rankings import get_rankings, RANKINGS_SIZE
-from age import _PRIME_END
-from weight_cut import _age_cut_scale
+from career.fighter import Fighter
+from career.tiers import WEIGHT_CLASSES, TIER_RULESET
+from career.labels import CHAMPION, CONTENDER, WASHED, LABEL_UPDATE_INTERVAL, get_champion_id
+from career.rankings import get_rankings, RANKINGS_SIZE
+from career.age import _PRIME_END
+from career.weight_cut import _age_cut_scale
 
 # ── Driver 1: title_ambition ──────────────────────────────────────────────────
 
@@ -515,16 +515,16 @@ def maybe_evaluate_weight_move(
 if __name__ == "__main__":
     import random as _random
 
-    from tiers import generate_all_tiers, TIER_LEVELS
-    from fight import simulate_fight
+    from career.tiers import generate_all_tiers, TIER_LEVELS
+    from engine.fight import simulate_fight
     from matchmaking import pick_opponent, apply_tier_transitions
-    from labels import maybe_update_labels, reset_title_registry, update_labels
+    from career.labels import maybe_update_labels, reset_title_registry, update_labels
     from title import reset_title_scheduling, maybe_run_title_fight
-    from age import advance_all_ages, reset_age_advancement
-    from development import advance_all_development, apply_win_development_boost, reset_development_advancement
-    from cuts import maybe_evaluate_cut, reset_cut_registry
-    from retirement import maybe_evaluate_retirement, reset_retirement_scanning
-    from rankings import update_rankings, reset_rankings, RANKINGS_UPDATE_INTERVAL
+    from career.age import advance_all_ages, reset_age_advancement
+    from career.development import advance_all_development, apply_win_development_boost, reset_development_advancement
+    from career.cuts import maybe_evaluate_cut, reset_cut_registry
+    from career.retirement import maybe_evaluate_retirement, reset_retirement_scanning
+    from career.rankings import update_rankings, reset_rankings, RANKINGS_UPDATE_INTERVAL
     from sim_calendar import reset_sim_clock, advance_sim_clock, get_sim_day
     from title import TITLE_FIGHT_INTERVAL
 

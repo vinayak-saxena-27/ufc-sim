@@ -22,8 +22,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import random
 
-from fighter import Fighter
-from development import (
+from career.fighter import Fighter
+from career.development import (
     apply_development_to_fighter,
     apply_win_development_boost,
     advance_all_development,
@@ -33,7 +33,7 @@ from development import (
     _TIER_MOD,
     _WIN_BOOST,
 )
-from age import (
+from career.age import (
     apply_age_to_fighter, _PRIME_START, SIM_DAYS_PER_YEAR,
     advance_all_ages, reset_age_advancement,
 )

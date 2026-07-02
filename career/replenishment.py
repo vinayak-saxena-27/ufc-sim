@@ -46,12 +46,12 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass, field
 
-from fighter import Fighter
-from academies import ACADEMIES, ACADEMY_PIPELINE, Academy
-from tiers import TIER_LEVELS, WEIGHT_CLASSES, generate_tier_fighter
-from age import SIM_DAYS_PER_YEAR
+from career.fighter import Fighter
+from career.academies import ACADEMIES, ACADEMY_PIPELINE, Academy
+from career.tiers import TIER_LEVELS, WEIGHT_CLASSES, generate_tier_fighter
+from career.age import SIM_DAYS_PER_YEAR
 from sim_calendar import get_sim_day
-from inflow import generate_crossover, generate_lateral
+from career.inflow import generate_crossover, generate_lateral
 
 # ── Rate constants ────────────────────────────────────────────────────────────
 

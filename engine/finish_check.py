@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from phase_output import SegmentOutput
+from engine.phase_output import SegmentOutput
 
 
 # ─── Thresholds ───────────────────────────────────────────────────────────────
@@ -159,7 +159,7 @@ def pressure_snapshot(segments: list[SegmentOutput]) -> dict[str, float]:
 
 if __name__ == "__main__":
     import math
-    from phase_output import SegmentOutput
+    from engine.phase_output import SegmentOutput
 
     RECENCY_DECAY = 0.02  # must match phase_output.py
 

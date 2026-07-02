@@ -28,9 +28,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import random
 from statistics import mean, stdev
 
-from fighter import Fighter, ATTR_NAMES
-from fight import win_probability, SCALE, NOISE_STD
-from tiers import TIER_CONFIG, TIER_LEVELS, WEIGHT_CLASSES, generate_all_tiers
+from career.fighter import Fighter, ATTR_NAMES
+from engine.fight import win_probability, SCALE, NOISE_STD
+from career.tiers import TIER_CONFIG, TIER_LEVELS, WEIGHT_CLASSES, generate_all_tiers
 from matchmaking import (
     pick_opponent, apply_tier_transitions,
     PROMOTE_WINDOW, PROMOTE_WINS_IN_LAST, DEMOTE_WINDOW, DEMOTE_LOSSES_IN_LAST,
@@ -208,7 +208,7 @@ all_fighters = [
 promotions: list[tuple[str, str, str]] = []  # (name, old_tier, new_tier)
 demotions:  list[tuple[str, str, str]] = []
 
-from fight import simulate_fight
+from engine.fight import simulate_fight
 
 random.seed(42)
 for _ in range(500):
@@ -235,7 +235,7 @@ if demotions:
           "..." if len(demotions) > 5 else "")
 
 # Standings: fighters with at least 1 fight, sorted by tier then win rate
-from tiers import TIER_CONFIG as _TC
+from career.tiers import TIER_CONFIG as _TC
 active = [f for f in all_fighters if f.wins + f.losses > 0]
 active.sort(
     key=lambda f: (

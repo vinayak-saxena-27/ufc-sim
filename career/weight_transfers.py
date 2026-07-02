@@ -82,18 +82,18 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass
 
-from fighter import Fighter
-from tiers import WEIGHT_CLASSES
-from labels import (
+from career.fighter import Fighter
+from career.tiers import WEIGHT_CLASSES
+from career.labels import (
     LABEL_UPDATE_INTERVAL, get_champion_id, award_title, vacate_title, get_title_defenses,
     maybe_update_labels,
 )
-from rankings import drop_from_rankings_cache
-from fight import simulate_fight
+from career.rankings import drop_from_rankings_cache
+from engine.fight import simulate_fight
 from matchmaking import apply_tier_transitions
-from development import apply_win_development_boost
-from retirement import maybe_evaluate_retirement
-from cuts import maybe_evaluate_cut, is_removed
+from career.development import apply_win_development_boost
+from career.retirement import maybe_evaluate_retirement
+from career.cuts import maybe_evaluate_cut, is_removed
 
 # ── Part 1: cut_severity recalibration ──────────────────────────────────────
 
@@ -466,24 +466,24 @@ def maybe_process_weight_transfers(
 if __name__ == "__main__":
     import random as _random
 
-    from tiers import generate_all_tiers
-    from fight import simulate_fight as _simulate_fight
+    from career.tiers import generate_all_tiers
+    from engine.fight import simulate_fight as _simulate_fight
     from matchmaking import pick_opponent, apply_tier_transitions as _att
-    from labels import (
+    from career.labels import (
         maybe_update_labels as _mul, reset_title_registry, update_labels,
         CHAMPION, get_title_defenses as _gtd,
     )
     from title import reset_title_scheduling, maybe_run_title_fight
-    from age import advance_all_ages, reset_age_advancement
-    from development import (
+    from career.age import advance_all_ages, reset_age_advancement
+    from career.development import (
         advance_all_development, apply_win_development_boost as _awdb,
         reset_development_advancement,
     )
-    from cuts import maybe_evaluate_cut as _mec, reset_cut_registry
-    from retirement import maybe_evaluate_retirement as _mer, reset_retirement_scanning
-    from rankings import update_rankings, reset_rankings, RANKINGS_UPDATE_INTERVAL
+    from career.cuts import maybe_evaluate_cut as _mec, reset_cut_registry
+    from career.retirement import maybe_evaluate_retirement as _mer, reset_retirement_scanning
+    from career.rankings import update_rankings, reset_rankings, RANKINGS_UPDATE_INTERVAL
     from sim_calendar import reset_sim_clock, advance_sim_clock, get_sim_day
-    from weight_movement import maybe_evaluate_weight_move
+    from career.weight_movement import maybe_evaluate_weight_move
 
     _random.seed(101)
     N_FIGHTS = 6000
@@ -559,7 +559,7 @@ if __name__ == "__main__":
     else:
         print("  (no move events this run — constructing a synthetic case instead)\n")
 
-        from labels import award_title, CHAMPION as _CH
+        from career.labels import award_title, CHAMPION as _CH
 
         f = next((x for x in all_fighters if x.fight_history and x.tier != "tier0"), all_fighters[0])
         target_wc = "welterweight" if f.weight_class != "welterweight" else "heavyweight"
@@ -570,7 +570,7 @@ if __name__ == "__main__":
         n_before = len(f.fight_history)
         # Pad fight_history so the LABEL_UPDATE_INTERVAL gate passes.
         while len(f.fight_history) % LABEL_UPDATE_INTERVAL != 0 or len(f.fight_history) == n_before:
-            from fighter import FightResult
+            from career.fighter import FightResult
             f.fight_history.append(FightResult(opponent_name="synthetic", outcome="win", method="decision", org="test", tier=f.tier))
 
         print(f"  Synthetic candidate: {f.name}  {f.weight_class} -> {target_wc}  (forced 'opportunity' flag)\n")

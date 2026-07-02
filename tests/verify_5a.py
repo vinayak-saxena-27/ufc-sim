@@ -18,8 +18,8 @@ import random
 from collections import defaultdict
 from statistics import mean, stdev
 
-from tiers import generate_all_tiers, generate_tier_fighter, TIER_LEVELS, TIER_CONFIG
-from academies import ACADEMIES, _NAMES, reset_name_registry
+from career.tiers import generate_all_tiers, generate_tier_fighter, TIER_LEVELS, TIER_CONFIG
+from career.academies import ACADEMIES, _NAMES, reset_name_registry
 
 # --- Helpers ------------------------------------------------------------------
 

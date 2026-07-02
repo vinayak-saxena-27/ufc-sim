@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import random
 
-from fighter import Fighter
-from academies import pick_academy, regional_name, reset_name_registry
-from development import assign_prospect_tier
+from career.fighter import Fighter
+from career.academies import pick_academy, regional_name, reset_name_registry
+from career.development import assign_prospect_tier
 
 
 # ─── Template config ──────────────────────────────────────────────────────────

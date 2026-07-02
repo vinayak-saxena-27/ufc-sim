@@ -4,11 +4,11 @@ import random
 from dataclasses import dataclass
 from statistics import mean as _mean
 
-from fighter import Fighter
-from templates import TEMPLATES, _TEMPLATE_REGIONS, _sample_hype
-from academies import pick_academy, regional_name, reset_name_registry, Academy
-from development import assign_prospect_tier
-from weight_cut import generate_cut_severity
+from career.fighter import Fighter
+from career.templates import TEMPLATES, _TEMPLATE_REGIONS, _sample_hype
+from career.academies import pick_academy, regional_name, reset_name_registry, Academy
+from career.development import assign_prospect_tier
+from career.weight_cut import generate_cut_severity
 
 # ─── Tuning constants ─────────────────────────────────────────────────────────
 # Per-attribute noise added on top of the template shape offset.
