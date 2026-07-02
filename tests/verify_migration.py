@@ -23,22 +23,22 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import random
 
-from fight import simulate_fight
-from fighter import FightResult
-from tiers import generate_all_tiers
+from engine.fight import simulate_fight
+from career.fighter import FightResult
+from career.tiers import generate_all_tiers
 from matchmaking import pick_opponent, apply_tier_transitions, reset_gate_stats
-from labels import maybe_update_labels, reset_title_registry, update_labels
+from career.labels import maybe_update_labels, reset_title_registry, update_labels
 from title import reset_title_scheduling, maybe_run_title_fight
-from age import (
+from career.age import (
     reset_age_advancement, advance_all_ages,
     SIM_DAYS_PER_YEAR, _PRIME_END,
 )
-from cuts import maybe_evaluate_cut, get_cut_log, reset_cut_registry
-from retirement import (
+from career.cuts import maybe_evaluate_cut, get_cut_log, reset_cut_registry
+from career.retirement import (
     maybe_evaluate_retirement, maybe_retire_inactive, reset_retirement_scanning,
     RETIRE_INACTIVE_GAP_DAYS, RETIRE_INACTIVE_SCAN_DAYS,
 )
-from rankings import update_rankings, get_rankings, reset_rankings, RANKINGS_UPDATE_INTERVAL
+from career.rankings import update_rankings, get_rankings, reset_rankings, RANKINGS_UPDATE_INTERVAL
 from sim_calendar import (
     reset_sim_clock, advance_sim_clock, get_sim_day,
     SIM_DAYS_PER_FIGHT, days_since,

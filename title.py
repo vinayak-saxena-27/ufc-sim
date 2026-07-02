@@ -55,14 +55,14 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass
 
-from fighter import Fighter
-from fight import simulate_fight
-from labels import award_title, get_champion_id, maybe_update_labels
+from career.fighter import Fighter
+from engine.fight import simulate_fight
+from career.labels import award_title, get_champion_id, maybe_update_labels
 from matchmaking import apply_tier_transitions
-from tiers import TIER_RULESET
-from cuts import maybe_evaluate_cut
-from retirement import maybe_evaluate_retirement
-from rankings import get_rankings, is_eligible_vs_ranked, RankingEntry, RANKINGS_SIZE
+from career.tiers import TIER_RULESET
+from career.cuts import maybe_evaluate_cut
+from career.retirement import maybe_evaluate_retirement
+from career.rankings import get_rankings, is_eligible_vs_ranked, RankingEntry, RANKINGS_SIZE
 from sim_calendar import get_sim_day, inactivity_percentile
 
 

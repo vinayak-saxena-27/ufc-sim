@@ -3,10 +3,10 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass
 
-from fighter import Fighter
-from tiers import TIER_LEVELS
-from academies import ACADEMY_PIPELINE
-from rankings import is_eligible_vs_ranked, get_ranked_ids, get_rankings, RANKINGS_SIZE
+from career.fighter import Fighter
+from career.tiers import TIER_LEVELS
+from career.academies import ACADEMY_PIPELINE
+from career.rankings import is_eligible_vs_ranked, get_ranked_ids, get_rankings, RANKINGS_SIZE
 
 # ─── Tuning constants ─────────────────────────────────────────────────────────
 # Adjust once you see promotion/demotion rates in sim output.

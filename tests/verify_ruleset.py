@@ -13,8 +13,8 @@ import random
 import os, sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from tiers import TIER_LEVELS, TIER_RULESET, TIER_CONFIG, generate_all_tiers
-from fight_engine import simulate_full_fight, TICKS_PER_ROUND, TICK_SECONDS
+from career.tiers import TIER_LEVELS, TIER_RULESET, TIER_CONFIG, generate_all_tiers
+from engine.fight_engine import simulate_full_fight, TICKS_PER_ROUND, TICK_SECONDS
 from test_fixtures import make_style_fighter
 
 PASS = "PASS"

@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import random
 
-from fighter import Fighter, FightResult
-from age import apply_age_to_fighter
+from career.fighter import Fighter, FightResult
+from career.age import apply_age_to_fighter
+from career.development import apply_development_to_fighter
+from career.weight_cut import apply_cut_to_fighter
 
 # ─── Tuning constants ─────────────────────────────────────────────────────────
 # Adjust these after reading smoke_test.py output.
@@ -59,12 +61,19 @@ def simulate_fight(
     win_probability() is preserved above for smoke_test.py calibration runs; it is
     no longer called from here.
     """
-    from fight_engine import simulate_full_fight
+    from engine.fight_engine import simulate_full_fight
 
-    # Apply age modifier before entering the engine.  Returns original if in prime window.
-    # Fatigue stacks on top of this within each round inside fight_engine.py.
-    fa_eff = apply_age_to_fighter(fighter_a)
-    fb_eff = apply_age_to_fighter(fighter_b)
+    # Apply modifier layers before entering the engine (order matters for readability
+    # and matches the fight-night timeline, not for correctness — all three deltas are
+    # computed from fighter.age, a raw field none of them write, so they're mutually
+    # additive/order-independent; see development.py module docstring for the proof).
+    #   1. Development: career-accumulated gain (young fighters, ~18-23)
+    #   2. Cut:         fight-night walk-around-weight cut severity impact
+    #   3. Age:         prime window = no-op; decline = negative penalty
+    #                   (also amplifies the cut's effect — see weight_cut.py)
+    #   4. Fatigue:     applied per round inside fight_engine.py
+    fa_eff = apply_age_to_fighter(apply_cut_to_fighter(apply_development_to_fighter(fighter_a)))
+    fb_eff = apply_age_to_fighter(apply_cut_to_fighter(apply_development_to_fighter(fighter_b)))
 
     outcome = simulate_full_fight(fa_eff, fb_eff, is_title=is_title)
     winner  = fighter_a if outcome.winner_id == fighter_a.fighter_id else fighter_b

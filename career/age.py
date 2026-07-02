@@ -62,7 +62,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from fighter import Fighter, ATTR_NAMES
+from career.fighter import Fighter, ATTR_NAMES
 from sim_calendar import get_sim_day
 
 # ── Advancement cadence ───────────────────────────────────────────────────────

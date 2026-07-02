@@ -45,10 +45,10 @@ from __future__ import annotations
 
 import random
 
-from fighter import Fighter
-from labels import WASHED, LEGEND, CHAMPION, LABEL_UPDATE_INTERVAL
-from age import _PRIME_END, apply_age_to_fighter
-from cuts import execute_removal, is_removed
+from career.fighter import Fighter
+from career.labels import WASHED, LEGEND, CHAMPION, LABEL_UPDATE_INTERVAL
+from career.age import _PRIME_END, apply_age_to_fighter
+from career.cuts import execute_removal, is_removed
 from sim_calendar import get_sim_day, days_since, _last_stamped_day
 
 

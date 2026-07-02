@@ -42,7 +42,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from fighter import Fighter
+    from career.fighter import Fighter
 
 # ── Part 1: Global clock ──────────────────────────────────────────────────────
 

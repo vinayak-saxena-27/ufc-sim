@@ -33,8 +33,8 @@ only on the 5th, 10th, 15th... fight, keeping the per-fight overhead minimal.
 """
 from __future__ import annotations
 
-from fighter import Fighter
-from tiers import TIER_LEVELS
+from career.fighter import Fighter
+from career.tiers import TIER_LEVELS
 
 # ── Label name constants ───────────────────────────────────────────────────────
 
@@ -102,25 +102,50 @@ _LEGEND_MIN_TITLE_WINS      = 2    # title-fight wins (from is_title=True wins)
 
 _title_holders: dict[tuple[str, str], str | None] = {}
 
+# Consecutive successful-defense counter per (weight_class, tier_key). Added for
+# Weight Class Flex Session C's win-and-vacate path (8+ defenses gate — see
+# weight_transfers.py). Maintained entirely inside award_title()/vacate_title();
+# no other title-tracking behavior changes.
+_title_defenses: dict[tuple[str, str], int] = {}
+
 
 def reset_title_registry() -> None:
-    """Clear all title holders. Call at the start of a fresh simulation."""
+    """Clear all title holders and defense counts. Call at the start of a fresh simulation."""
     _title_holders.clear()
+    _title_defenses.clear()
 
 
 def award_title(winner: Fighter) -> None:
-    """Record winner as the current champion at their tier+division."""
-    _title_holders[(winner.weight_class, winner.tier)] = winner.fighter_id
+    """
+    Record winner as the current champion at their tier+division.
+
+    Also updates the defense counter: if winner already held this exact belt,
+    this is a successful defense (increment); otherwise it's a new reign
+    (different winner, or the belt was vacant) and the counter resets to 0.
+    """
+    key = (winner.weight_class, winner.tier)
+    if _title_holders.get(key) == winner.fighter_id:
+        _title_defenses[key] = _title_defenses.get(key, 0) + 1
+    else:
+        _title_defenses[key] = 0
+    _title_holders[key] = winner.fighter_id
 
 
 def vacate_title(weight_class: str, tier_key: str) -> None:
-    """Vacate a title (injury, retirement, etc.)."""
+    """Vacate a title (injury, retirement, etc.). Also resets the defense counter."""
     _title_holders[(weight_class, tier_key)] = None
+    _title_defenses[(weight_class, tier_key)] = 0
 
 
 def get_champion_id(weight_class: str, tier_key: str) -> str | None:
     """Return the fighter_id of the current champion, or None if vacant/unset."""
     return _title_holders.get((weight_class, tier_key))
+
+
+def get_title_defenses(weight_class: str, tier_key: str) -> int:
+    """Return the current champion's consecutive successful-defense count
+    (0 if vacant, a freshly-won reign, or unset)."""
+    return _title_defenses.get((weight_class, tier_key), 0)
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
@@ -300,8 +325,8 @@ def maybe_update_labels(fighter: Fighter) -> None:
 
 if __name__ == "__main__":
     import random
-    from tiers import generate_all_tiers, WEIGHT_CLASSES
-    from fight import simulate_fight
+    from career.tiers import generate_all_tiers, WEIGHT_CLASSES
+    from engine.fight import simulate_fight
     from matchmaking import pick_opponent, apply_tier_transitions
 
     random.seed(77)

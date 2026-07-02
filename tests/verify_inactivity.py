@@ -17,13 +17,13 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import random
 
-from fight import simulate_fight
-from tiers import generate_all_tiers
+from engine.fight import simulate_fight
+from career.tiers import generate_all_tiers
 from matchmaking import pick_opponent, apply_tier_transitions, reset_gate_stats
-from labels import reset_title_registry
+from career.labels import reset_title_registry
 from title import reset_title_scheduling
-from cuts import reset_cut_registry
-from rankings import reset_rankings
+from career.cuts import reset_cut_registry
+from career.rankings import reset_rankings
 from sim_calendar import (
     reset_sim_clock, advance_sim_clock, get_sim_day,
     inactivity_percentile, INACTIVITY_PERCENTILE_THRESHOLD,

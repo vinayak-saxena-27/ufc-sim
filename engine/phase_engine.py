@@ -19,8 +19,8 @@ import random
 from dataclasses import dataclass
 from enum import Enum
 
-from fighter import Fighter
-from fight import SCALE  # shared logistic steepness constant
+from career.fighter import Fighter
+from engine.fight import SCALE  # shared logistic steepness constant
 
 # Sub-attribute gaps are comparable in magnitude to overall gaps (template means
 # range from -22 to +25), so reusing SCALE=43 keeps contest steepness consistent
@@ -294,7 +294,7 @@ def simulate_round(
 # ─── Sample call ─────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    from templates import generate_fighter
+    from career.templates import generate_fighter
 
     random.seed(7)
     wres = generate_fighter("dagestan_sambo")

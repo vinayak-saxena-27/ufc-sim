@@ -4,9 +4,11 @@ import random
 from dataclasses import dataclass
 from statistics import mean as _mean
 
-from fighter import Fighter
-from templates import TEMPLATES, _TEMPLATE_REGIONS, _sample_hype
-from academies import pick_academy, regional_name, reset_name_registry
+from career.fighter import Fighter
+from career.templates import TEMPLATES, _TEMPLATE_REGIONS, _sample_hype
+from career.academies import pick_academy, regional_name, reset_name_registry, Academy
+from career.development import assign_prospect_tier
+from career.weight_cut import generate_cut_severity
 
 # ─── Tuning constants ─────────────────────────────────────────────────────────
 # Per-attribute noise added on top of the template shape offset.
@@ -98,7 +100,13 @@ def _template_natural_overall(template_name: str) -> float:
     return _mean(m for m, _ in TEMPLATES[template_name].values())
 
 
-def generate_tier_fighter(template_name: str, tier_key: str, weight_class: str = "unknown") -> Fighter:
+def generate_tier_fighter(
+    template_name: str,
+    tier_key: str,
+    weight_class: str = "unknown",
+    *,
+    academy: Academy | None = None,
+) -> Fighter:
     """
     Creates a fighter whose overall centers on the tier distribution and whose
     attribute profile preserves the template's stylistic identity.
@@ -106,6 +114,10 @@ def generate_tier_fighter(template_name: str, tier_key: str, weight_class: str =
     Composition: tier sets power level, template sets shape within that level.
     A Tier 1 and a Tier 3 Dagestan fighter both show wrestling-strong/boxing-weak
     shape; they differ only in absolute power level.
+
+    academy: if supplied (e.g. by replenishment.py for per-academy generation),
+             that specific academy is used instead of a random pick. Existing
+             callers omit this and get the original random-selection behavior.
     """
     tier = TIER_CONFIG[tier_key]
     cfg  = TEMPLATES[template_name]
@@ -116,7 +128,8 @@ def generate_tier_fighter(template_name: str, tier_key: str, weight_class: str =
     # relative_offset = how far each attr sits above/below the template's natural overall.
     # Adding it to target_overall re-centers the template shape at the tier's power level.
     # Academy nudge shifts individual attribute centers without changing tier power target.
-    academy = pick_academy(template_name)
+    if academy is None:
+        academy = pick_academy(template_name)
     attrs = {
         attr: target_overall + (tmpl_mean - natural_ovr) + academy.get_nudge(attr) + random.gauss(0.0, ATTR_NOISE_STD)
         for attr, (tmpl_mean, _) in cfg.items()
@@ -143,7 +156,9 @@ def generate_tier_fighter(template_name: str, tier_key: str, weight_class: str =
         tier=tier_key,
         weight_class=weight_class,
         academy=academy.name,
+        prospect_tier=assign_prospect_tier(),
         hype=_sample_hype(attrs["power"], attrs["athleticism"]) + academy.pipeline_strength,
+        cut_severity=generate_cut_severity(attrs["power"], attrs["athleticism"], weight_class),
         **attrs,
     )
 

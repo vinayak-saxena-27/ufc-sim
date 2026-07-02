@@ -21,15 +21,15 @@ import random
 from collections import defaultdict
 from statistics import mean, stdev
 
-from fighter import Fighter, ATTR_NAMES
-from fight import SCALE
-from fight_engine import simulate_full_fight
-from finish_check import (check_finish, pressure_snapshot,
+from career.fighter import Fighter, ATTR_NAMES
+from engine.fight import SCALE
+from engine.fight_engine import simulate_full_fight
+from engine.finish_check import (check_finish, pressure_snapshot,
                           KO_TKO_THRESHOLD, SUBMISSION_THRESHOLD)
-from phase_engine import simulate_round, Phase
-from phase_output import compute_round_output
-from fatigue import fresh_fatigue, apply_fatigue_to_fighter, update_fatigue
-from tiers import TIER_CONFIG, TIER_LEVELS, generate_all_tiers
+from engine.phase_engine import simulate_round, Phase
+from engine.phase_output import compute_round_output
+from engine.fatigue import fresh_fatigue, apply_fatigue_to_fighter, update_fatigue
+from career.tiers import TIER_CONFIG, TIER_LEVELS, generate_all_tiers
 from test_fixtures import (make_zero_baseline, make_style_fighter,
                            STYLE_DEVIATIONS, STYLE_LABELS)
 

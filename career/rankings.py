@@ -56,7 +56,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from fighter import Fighter, FightResult
+from career.fighter import Fighter, FightResult
 
 # ── Part 1: Gate constants ────────────────────────────────────────────────────
 
@@ -256,6 +256,27 @@ def reset_rankings() -> None:
     _ranked_ids.clear()
 
 
+def drop_from_rankings_cache(fighter_id: str, weight_class: str) -> None:
+    """
+    Evict a fighter from one division's CACHED rankings — used when a fighter
+    moves OUT of that division mid-sim (weight_transfers.py, Weight Class Flex
+    Session C). Pure cache eviction: does not touch compute_division_rankings()
+    or _score_fighter() in any way.
+
+    Best-effort only: FightResult has no weight_class field, so a mover's old-
+    division tier4 fight history still counts toward their score wherever they
+    currently sit. They may re-enter THIS division's rankings on the next
+    scheduled update_rankings() recompute if that carried-over record still
+    qualifies — closing that gap would require weight-class-aware scoring,
+    out of scope here.
+    """
+    if weight_class in _rankings_by_wc:
+        _rankings_by_wc[weight_class] = [
+            e for e in _rankings_by_wc[weight_class] if e.fighter.fighter_id != fighter_id
+        ]
+    _ranked_ids.discard(fighter_id)
+
+
 # ── Part 1: Gate check ────────────────────────────────────────────────────────
 
 def is_eligible_vs_ranked(fighter: Fighter) -> bool:
@@ -298,7 +319,7 @@ def is_eligible_vs_ranked(fighter: Fighter) -> bool:
 # ── Calibration test ──────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    from fighter import Fighter, FightResult
+    from career.fighter import Fighter, FightResult
 
     def _make_fighter(name: str, hype: float = 30.0) -> Fighter:
         f = Fighter(

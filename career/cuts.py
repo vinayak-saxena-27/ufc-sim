@@ -36,8 +36,8 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass, field
 
-from fighter import Fighter
-from labels import (
+from career.fighter import Fighter
+from career.labels import (
     PROSPECT, GATEKEEPER, JOURNEYMAN, WASHED, CONTENDER, CHAMPION, LEGEND,
     LABEL_UPDATE_INTERVAL, get_champion_id, vacate_title,
 )

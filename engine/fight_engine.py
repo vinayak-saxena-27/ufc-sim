@@ -19,12 +19,12 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass
 
-from fighter import Fighter
-from phase_engine import Phase, simulate_round, TICKS_PER_ROUND, TICK_SECONDS
-from tiers import TIER_RULESET
-from phase_output import compute_round_output
-from finish_check import FinishEvent, check_finish
-from fatigue import FatigueState, fresh_fatigue, apply_fatigue_to_fighter, update_fatigue
+from career.fighter import Fighter
+from engine.phase_engine import Phase, simulate_round, TICKS_PER_ROUND, TICK_SECONDS
+from career.tiers import TIER_RULESET
+from engine.phase_output import compute_round_output
+from engine.finish_check import FinishEvent, check_finish
+from engine.fatigue import FatigueState, fresh_fatigue, apply_fatigue_to_fighter, update_fatigue
 
 
 # ─── Round count constants ─────────────────────────────────────────────────────
@@ -305,7 +305,7 @@ def _print_fight(fa: Fighter, fb: Fighter, *, is_title: bool = False) -> None:
 
 
 if __name__ == "__main__":
-    from templates import generate_fighter
+    from career.templates import generate_fighter
 
     # Fight 1: Wrestler (Dagestan) vs Striker (Muay Thai) -- likely GROUND control
     random.seed(12)
