@@ -64,6 +64,37 @@ class Fighter:
     # base sub-attributes above are NEVER written by the development system.
     development_modifier: float = 0.0
 
+    # Relative walk-around-weight attribute: how hard this fighter's cut to their
+    # current weight_class is. Zero-centered, uncapped — see weight_cut.py for the
+    # generation formula and the fight-night performance modifier it drives.
+    # Set at generation time by generate_tier_fighter(); recalibrated on an
+    # executed weight-class move by weight_transfers.py (Flex Session C).
+    cut_severity: float = 0.0
+
+    # Pending weight-class movement flags — set periodically by
+    # weight_movement.evaluate_weight_class_move(), fully recomputed (not sticky)
+    # each evaluation cycle. Consumed (and cleared) by weight_transfers.py
+    # (Flex Session C), which executes the actual pool transfer these flags request.
+    weight_class_move_candidate: bool = False
+    weight_class_move_direction: str | None = None   # "up" | "down" | None
+    weight_class_move_reason:    str | None = None   # "title_ambition" | "struggling" | "cut_damage" | "opportunity" | None
+    weight_class_move_target:    str | None = None   # resolved target weight_class, or None
+
+    # Most-recently-EXECUTED move tracking (weight_transfers.py, Flex Session C) —
+    # distinct from the pending flags above, which get cleared once a move fires.
+    # Drives Part 3's opportunity hype-boost window.
+    last_move_reason:               str | None = None
+    last_move_fight_count:          int  = 0       # len(fight_history) at the time of the move
+    opportunity_hype_boost_applied: bool = False   # guards the one-time Part 3 boost
+
+    # Win-and-vacate campaign state (weight_transfers.py Part 2) — set only while
+    # an elite, entrenched champion is actively campaigning for a second belt in
+    # the adjacent division without leaving their home division.
+    campaign_active:           bool = False
+    campaign_weight_class:     str | None = None   # the ADJACENT division being campaigned
+    campaign_fights_remaining: int  = 0
+    campaign_wins:              int  = 0
+
     fight_history: list[FightResult] = field(default_factory=list)
     labels: set[str] = field(default_factory=set)
 

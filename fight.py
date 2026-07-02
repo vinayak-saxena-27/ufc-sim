@@ -5,6 +5,7 @@ import random
 from fighter import Fighter, FightResult
 from age import apply_age_to_fighter
 from development import apply_development_to_fighter
+from weight_cut import apply_cut_to_fighter
 
 # ─── Tuning constants ─────────────────────────────────────────────────────────
 # Adjust these after reading smoke_test.py output.
@@ -62,16 +63,17 @@ def simulate_fight(
     """
     from fight_engine import simulate_full_fight
 
-    # Apply modifier layers before entering the engine (order matters for readability,
-    # not for correctness — all modifiers are additive so the net result is identical
-    # regardless of order; see development.py module docstring for proof).
+    # Apply modifier layers before entering the engine (order matters for readability
+    # and matches the fight-night timeline, not for correctness — all three deltas are
+    # computed from fighter.age, a raw field none of them write, so they're mutually
+    # additive/order-independent; see development.py module docstring for the proof).
     #   1. Development: career-accumulated gain (young fighters, ~18-23)
-    #   2. Age:         prime window = no-op; decline = negative penalty
-    #   3. Fatigue:     applied per round inside fight_engine.py
-    # Each layer is applied to the output of the previous; because all three are
-    # purely additive, this is equivalent to applying each to the base independently.
-    fa_eff = apply_age_to_fighter(apply_development_to_fighter(fighter_a))
-    fb_eff = apply_age_to_fighter(apply_development_to_fighter(fighter_b))
+    #   2. Cut:         fight-night walk-around-weight cut severity impact
+    #   3. Age:         prime window = no-op; decline = negative penalty
+    #                   (also amplifies the cut's effect — see weight_cut.py)
+    #   4. Fatigue:     applied per round inside fight_engine.py
+    fa_eff = apply_age_to_fighter(apply_cut_to_fighter(apply_development_to_fighter(fighter_a)))
+    fb_eff = apply_age_to_fighter(apply_cut_to_fighter(apply_development_to_fighter(fighter_b)))
 
     outcome = simulate_full_fight(fa_eff, fb_eff, is_title=is_title)
     winner  = fighter_a if outcome.winner_id == fighter_a.fighter_id else fighter_b

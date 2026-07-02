@@ -34,6 +34,11 @@ from age import advance_all_ages, reset_age_advancement
 from development import advance_all_development, apply_win_development_boost, reset_development_advancement
 from cuts import maybe_evaluate_cut, get_cut_log, reset_cut_registry
 from retirement import maybe_evaluate_retirement, maybe_retire_inactive, reset_retirement_scanning
+from weight_movement import maybe_evaluate_weight_move
+from weight_transfers import (
+    maybe_process_weight_transfers, advance_campaigns,
+    get_move_log, reset_weight_transfer_log,
+)
 from rankings import (
     update_rankings, get_rankings, reset_rankings,
     RANKINGS_UPDATE_INTERVAL, RANKINGS_SIZE,
@@ -91,6 +96,7 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
     initialize_replenishment()
     reset_retirement_scanning()
     reset_elite_pairings()
+    reset_weight_transfer_log()
     all_fighters = [
         f
         for wc_pools in pools.values()
@@ -157,6 +163,9 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
                 removed = maybe_evaluate_cut(fighter, pools, fight_num=i + 1)
             if removed:
                 fighters_to_remove.append(fighter)
+            else:
+                maybe_evaluate_weight_move(fighter, pools)
+                maybe_process_weight_transfers(fighter, pools, fight_num=i + 1, sim_day=current_day)
 
         for rf in fighters_to_remove:
             all_fighters[:] = [f for f in all_fighters if f is not rf]
@@ -172,6 +181,11 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
         # Development sweeps the same cadence; called after age so age_factor reflects
         # the just-incremented age (fighters who turned 23 this year get age_factor=0).
         advance_all_development(all_fighters)
+
+        # Advance any active win-and-vacate campaigns (weight_transfers.py) by one
+        # directly-simulated fight each — self-initiated events, not triggered by
+        # a specific fighter's own regular bout landing on the periodic cadence.
+        advance_campaigns(all_fighters, pools, fight_num=i + 1, sim_day=get_sim_day())
 
         # Academy replenishment: generate prospects from academies whose schedule
         # has elapsed, and run the quarterly population floor backstop.
@@ -406,6 +420,48 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
         console.print(ct)
     else:
         console.print("[dim]  No roster events during this simulation run.[/dim]")
+
+    # ── Weight-class moves ────────────────────────────────────────────────────
+    move_log = get_move_log()
+    _executed_reasons = {"title_ambition", "struggling", "cut_damage", "opportunity"}
+    n_moves      = sum(1 for r in move_log if r.reason in _executed_reasons)
+    n_skips      = sum(1 for r in move_log if r.is_skip)
+    n_vacated    = sum(1 for r in move_log if r.title_vacated)
+    n_campaigns  = sum(1 for r in move_log if r.reason == "win_and_vacate_start")
+    n_dual_champ = sum(1 for r in move_log if r.reason == "win_and_vacate_title_won")
+    n_hype       = sum(1 for r in move_log if r.reason == "opportunity_hype_boost")
+    console.print()
+    console.print(Rule(
+        f"[bold]Weight-Class Moves[/bold]  "
+        f"[dim]({n_moves} moved  |  {n_skips} class-skips  |  {n_vacated} titles vacated  |  "
+        f"{n_campaigns} win-and-vacate campaigns  |  {n_dual_champ} dual-champion wins  |  "
+        f"{n_hype} opportunity hype boosts)[/dim]"
+    ))
+    console.print()
+
+    if move_log:
+        mt = Table(box=box.SIMPLE_HEAD, show_lines=False, padding=(0, 1))
+        mt.add_column("Sim#",    justify="right",  style="dim",        width=5)
+        mt.add_column("Fighter", no_wrap=True,     style="white",      width=20)
+        mt.add_column("From",                      style="dim",        width=12)
+        mt.add_column("To",                        style="dim",        width=12)
+        mt.add_column("Reason",                     style="bold cyan",  width=22)
+        mt.add_column("Vacated",                    style="yellow",     width=7)
+        mt.add_column("Note",                       style="dim",        min_width=20)
+
+        for rec in move_log:
+            mt.add_row(
+                str(rec.fight_num),
+                rec.fighter_name,
+                _WC_SHORT.get(rec.from_wc, rec.from_wc),
+                _WC_SHORT.get(rec.to_wc, rec.to_wc),
+                rec.reason + (" [SKIP]" if rec.is_skip else ""),
+                "YES" if rec.title_vacated else "-",
+                rec.note,
+            )
+        console.print(mt)
+    else:
+        console.print("[dim]  No weight-class moves during this simulation run.[/dim]")
 
     # ── Current champions ─────────────────────────────────────────────────────
     console.print()
