@@ -193,7 +193,7 @@ def _adjacent_up_wc(fighter: Fighter) -> str | None:
 
 
 def _is_win_and_vacate_eligible(fighter: Fighter) -> bool:
-    org = fighter.org if fighter.tier == "tier4" else ""
+    org = fighter.org if fighter.tier in ("tier2", "tier4") else ""
     if get_champion_id(fighter.weight_class, fighter.tier, org) != fighter.fighter_id:
         return False
     if get_title_defenses(fighter.weight_class, fighter.tier, org) < _WIN_AND_VACATE_MIN_DEFENSES:
@@ -221,7 +221,7 @@ def _execute_move(
 
     # Title vacancy check.
     title_vacated = False
-    _org = fighter.org if tier == "tier4" else ""
+    _org = fighter.org if tier in ("tier2", "tier4") else ""
     if get_champion_id(old_wc, tier, _org) == fighter.fighter_id:
         vacate_title(old_wc, tier, _org)
         title_vacated = True
@@ -273,7 +273,7 @@ def _start_campaign(
         fight_num=fight_num, sim_day=sim_day, fighter_name=fighter.name,
         fighter_id=fighter.fighter_id, from_wc=fighter.weight_class, to_wc=target_wc,
         reason="win_and_vacate_start",
-        note=f"{get_title_defenses(fighter.weight_class, fighter.tier, fighter.org if fighter.tier == 'tier4' else '')} defenses at home; campaigning up",
+        note=f"{get_title_defenses(fighter.weight_class, fighter.tier, fighter.org if fighter.tier in ('tier2', 'tier4') else '')} defenses at home; campaigning up",
     ))
 
 
@@ -314,7 +314,7 @@ def _advance_one_campaign(
     # Home-title priority: title.py's own scheduling runs autonomously against
     # the home pool (fighter was never removed from it). If it stripped the
     # belt from them, the campaign no longer makes sense — abort.
-    if get_champion_id(home_wc, tier, fighter.org if tier == "tier4" else "") != fighter.fighter_id:
+    if get_champion_id(home_wc, tier, fighter.org if tier in ("tier2", "tier4") else "") != fighter.fighter_id:
         _end_campaign(fighter, pools, fight_num, sim_day,
                       success=False, note="lost home title mid-campaign")
         return
@@ -356,7 +356,7 @@ def _advance_one_campaign(
         if fighter.campaign_wins >= _CAMPAIGN_WINS_TO_TITLE:
             award_title(fighter)
             print(f"[MOVE] {fighter.name} becomes DUAL-CHAMPION at {campaign_wc}!")
-            vacate_title(campaign_wc, tier, fighter.org if tier == "tier4" else "")
+            vacate_title(campaign_wc, tier, fighter.org if tier in ("tier2", "tier4") else "")
             _end_campaign(fighter, pools, fight_num, sim_day,
                           success=True, note="won title, immediately vacated per win-and-vacate")
             return
@@ -406,7 +406,7 @@ def _maybe_apply_opportunity_hype_boost(fighter: Fighter) -> None:
         fighter.opportunity_hype_boost_applied = True  # window closed; stop checking
         return
 
-    _org = fighter.org if fighter.tier == "tier4" else ""
+    _org = fighter.org if fighter.tier in ("tier2", "tier4") else ""
     if get_champion_id(fighter.weight_class, fighter.tier, _org) != fighter.fighter_id:
         return  # not champion yet — keep checking next cycles until the window closes
 

@@ -89,12 +89,35 @@ REFUSAL_PROB_MID_TITLE_RUN: float = 0.65
 offering an immediate title shot). The ONLY realistic refusal case -- every
 other approached fighter accepts."""
 
+MAX_APEX_ROSTER: int = 12
+"""Session B1, Part 3 (Apex over-concentration fix): soft roster cap PER
+WEIGHT CLASS, counting Apex's ACTUAL roster size (not just the ranked top-15)
+-- unlike _apex_need_multiplier's ranked-depth need signal, this is about raw
+headcount. First-pass: tier4's default population is ~15/weight class (before
+any cross-org movement), so 12 lets Apex be the clear largest single-org
+share without literally emptying the other two orgs by roster-size alone."""
+
+APEX_ROSTER_SOFT_CAP_MULT: float = 0.15
+"""When Apex's roster in a weight class exceeds MAX_APEX_ROSTER, poaching
+probability for that weight class multiplies by this steep-but-not-absolute
+factor -- Apex still occasionally signs the truly exceptional even when
+'full', it just becomes much rarer."""
+
 
 def _apex_need_multiplier(weight_class: str) -> float:
     apex_ranked_count = len(get_org_rankings(weight_class, APEX_FC_NAME))
     deficit = POACH_NEED_TARGET_DEPTH - apex_ranked_count
     mult = 1.0 + deficit * 0.15
     return max(POACH_NEED_MIN_MULT, min(POACH_NEED_MAX_MULT, mult))
+
+
+def _apex_roster_multiplier(
+    weight_class: str, pools: dict[str, dict[str, list[Fighter]]],
+) -> float:
+    apex_roster_size = sum(
+        1 for f in pools.get(weight_class, {}).get("tier4", []) if f.org == APEX_FC_NAME
+    )
+    return APEX_ROSTER_SOFT_CAP_MULT if apex_roster_size > MAX_APEX_ROSTER else 1.0
 
 
 @dataclass
@@ -137,7 +160,9 @@ def _log(rec: OrgMoveRecord) -> None:
         print(f"[ORG] {rec.fighter_name} moved {rec.from_org} -> {rec.to_org} ({rec.note}).")
 
 
-def _maybe_poach_to_apex(fighter: Fighter, fight_num: int) -> None:
+def _maybe_poach_to_apex(
+    fighter: Fighter, fight_num: int, pools: dict[str, dict[str, list[Fighter]]],
+) -> None:
     wc  = fighter.weight_class
     org = fighter.org
 
@@ -156,7 +181,7 @@ def _maybe_poach_to_apex(fighter: Fighter, fight_num: int) -> None:
         return
 
     base_p = POACH_BASE_PROB_CHAMPION if is_champion else POACH_BASE_PROB_RANKED
-    p = base_p * _apex_need_multiplier(wc)
+    p = base_p * _apex_need_multiplier(wc) * _apex_roster_multiplier(wc, pools)
     if random.random() >= p:
         return
 
@@ -312,11 +337,17 @@ def _maybe_move_within_tier(fighter: Fighter, fight_num: int) -> None:
 
 def run_org_movement_sweep(
     all_fighters: list[Fighter],
+    pools: dict[str, dict[str, list[Fighter]]],
     fight_num: int = 0,
 ) -> None:
     """Evaluate cross-org movement for every tier4 fighter whose fight count
     lands on LABEL_UPDATE_INTERVAL this cycle (same cadence as labels/cuts).
-    Call once per main sim-loop iteration."""
+    Call once per main sim-loop iteration. Mid-major (tier2) fighters are NOT
+    evaluated here -- this whole module (poach/departure/lateral movement) is
+    explicitly a top-tier-org (tier4) mechanic; mid-major's own Apex-over-
+    concentration fix (champion retention) lives in career/nonelite_rankings.py
+    instead, since it modifies the scout-notice promotion probability, not a
+    separate movement event."""
     for fighter in all_fighters:
         if fighter.tier != "tier4" or not fighter.org:
             continue
@@ -327,6 +358,6 @@ def run_org_movement_sweep(
         if fighter.org == APEX_FC_NAME:
             _maybe_leave_apex(fighter, fight_num)
         else:
-            _maybe_poach_to_apex(fighter, fight_num)
+            _maybe_poach_to_apex(fighter, fight_num, pools)
             if fighter.org != APEX_FC_NAME:   # didn't just get poached this cycle
                 _maybe_move_within_tier(fighter, fight_num)

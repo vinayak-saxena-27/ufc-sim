@@ -128,8 +128,9 @@ def award_title(winner: Fighter) -> None:
     """
     Record winner as the current champion at their tier+division(+org).
 
-    org is derived directly from the winner Fighter object (winner.org, only
-    meaningful at tier4) rather than requiring every caller to pass it --
+    org is derived directly from the winner Fighter object (winner.org,
+    meaningful at tier4 and tier2 -- Session B1 extended org-affiliated
+    titles down to mid-major) rather than requiring every caller to pass it --
     award_title already receives the whole Fighter, so there's no ambiguity
     to resolve at the call site the way there is for the id-only accessors
     below (get_champion_id/vacate_title/get_title_defenses).
@@ -138,7 +139,7 @@ def award_title(winner: Fighter) -> None:
     this is a successful defense (increment); otherwise it's a new reign
     (different winner, or the belt was vacant) and the counter resets to 0.
     """
-    org = winner.org if winner.tier == "tier4" else ""
+    org = winner.org if winner.tier in ("tier2", "tier4") else ""
     key = (winner.weight_class, winner.tier, org)
     if _title_holders.get(key) == winner.fighter_id:
         _title_defenses[key] = _title_defenses.get(key, 0) + 1
@@ -228,7 +229,7 @@ def compute_labels(fighter: Fighter, existing_labels: set[str]) -> set[str]:
     current_level = _TIER_LEVEL.get(fighter.tier, 0)
 
     # ── Champion (direct readout) ─────────────────────────────────────────────
-    _champ_org = fighter.org if fighter.tier == "tier4" else ""
+    _champ_org = fighter.org if fighter.tier in ("tier2", "tier4") else ""
     if get_champion_id(fighter.weight_class, fighter.tier, _champ_org) == fighter.fighter_id:
         labels.add(CHAMPION)
 

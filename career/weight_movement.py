@@ -224,7 +224,7 @@ def _is_likely_next_challenger(fighter: Fighter, pool: list[Fighter], weight_cla
                 return e.rank == 1
         return False
 
-    champ_id = get_champion_id(weight_class, fighter.tier, fighter.org if fighter.tier == "tier4" else "")
+    champ_id = get_champion_id(weight_class, fighter.tier, fighter.org if fighter.tier in ("tier2", "tier4") else "")
     candidates = [f for f in pool if f.fighter_id != champ_id]
     if not candidates:
         return False

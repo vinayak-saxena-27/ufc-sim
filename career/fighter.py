@@ -51,12 +51,21 @@ class Fighter:
     weight_class: str = "unknown"  # "lightweight" | "welterweight" | "heavyweight"
     academy: str = ""              # assigned training camp; set at generation, stable thereafter
 
-    # Top-tier organization affiliation (Org Identity session). Only meaningful at
-    # tier4 -- "" for every other tier. One of "Apex FC" / "The League" /
-    # "Eastern Grand Prix" once assigned. Set at generation time for fighters
-    # generated directly into tier4, and at promotion time for fighters who rise
-    # into tier4 -- see orgs/org_registry.py::assign_org().
+    # Organization affiliation (Org Identity sessions). Meaningful at tier4
+    # (one of "Apex FC" / "The League" / "Eastern Grand Prix") and tier2 (one
+    # of the eight mid-major orgs, see orgs/org_registry.py::MIDMAJOR_ORG_NAMES)
+    # -- "" at tier0/1/3, which have no org concept. Set at generation time for
+    # fighters generated directly into tier2/tier4, and at promotion/demotion
+    # time for fighters who move into those tiers -- see orgs/org_registry.py::
+    # assign_org() / assign_midmajor_org().
     org: str = ""
+    # Session B1: remembers which mid-major org a fighter competed for when
+    # they leave tier2 upward to tier3 (which stays a generic, org-less pool --
+    # see orgs/org_registry.py::capture_midmajor_feed()). Consumed by
+    # assign_org() when the fighter later reaches tier4, to route them toward
+    # that mid-major's fed top-tier org instead of pure template weighting.
+    # "" whenever not mid-promotion from a mid-major org.
+    midmajor_feed_org: str = ""
     # Sim day the fighter joined their CURRENT org (generation day, or the day of
     # a promotion/move/poach). Drives the org-movement tenure gate
     # (MIN_TENURE_BEFORE_POACH in orgs/org_movement.py).

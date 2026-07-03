@@ -52,7 +52,7 @@ from career.rankings import (
 )
 from career.nonelite_rankings import (
     update_nonelite_rankings, reset_nonelite_rankings,
-    get_midmajor_rankings, get_toporg_rankings,
+    get_midmajor_rankings, get_midmajor_org_rankings, get_toporg_rankings,
     maybe_apply_scout_notice, reset_scout_notice_log, get_scout_notice_log,
     MIDMAJOR_LIST_SIZE, TOPORG_LIST_SIZE,
 )
@@ -61,6 +61,7 @@ from career.org_rankings import (
 )
 from orgs.org_registry import (
     ORG_NAMES, APEX_FC_NAME, THE_LEAGUE_NAME, EASTERN_GP_NAME, decision_mode_for_org,
+    MIDMAJOR_ORG_NAMES,
 )
 from orgs.league_season import (
     run_league_season, reset_league_season, reset_league_history, get_league_history,
@@ -68,6 +69,7 @@ from orgs.league_season import (
 )
 from orgs.org_movement import (
     run_org_movement_sweep, reset_org_movement_log, get_org_movement_log,
+    MAX_APEX_ROSTER,
 )
 from sim_calendar import reset_sim_clock, advance_sim_clock, get_sim_day, SIM_DAYS_PER_FIGHT
 from career.replenishment import (
@@ -175,7 +177,13 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
         # pool where the fight took place, not where A ends up afterward.
         fight_wc   = a.weight_class
         fight_tier = a.tier
-        fight_org  = a.org if fight_tier == "tier4" else ""
+        # tier2 (mid-major) and tier4 (top-tier) both carry a real org; other
+        # tiers have no org concept. Regular tier2 matchmaking is NOT org-
+        # partitioned (only mid-major TITLE fights are, per Session B1 Part 5)
+        # -- so the title-fight activity counter below tracks fighter A's org
+        # regardless of which org B happens to be from, same as tier4's
+        # pre-hard-partition counting convention.
+        fight_org  = a.org if fight_tier in ("tier2", "tier4") else ""
         current_day = get_sim_day()
 
         p_a_wins = _true_prob(a.overall, b.overall)
@@ -230,7 +238,7 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
 
         # Cross-org free agency sweep (Org Identity session, Part 6) -- gated
         # internally per-fighter on LABEL_UPDATE_INTERVAL, same cadence as labels/cuts.
-        run_org_movement_sweep(all_fighters, fight_num=i + 1)
+        run_org_movement_sweep(all_fighters, pools, fight_num=i + 1)
 
         # Advance the global clock after all activity for this iteration is stamped.
         advance_sim_clock()
@@ -553,7 +561,7 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
     _fighter_index = {f.fighter_id: f for f in all_fighters}
     any_champ = False
     for wc in WEIGHT_CLASSES:
-        for tier_key in TIER_LEVELS[1:4]:   # tier1-tier3 (no titles at tier0; tier4 is org-split below)
+        for tier_key in ("tier1", "tier3"):   # no titles at tier0; tier2/tier4 are org-split below
             champ_id = get_champion_id(wc, tier_key)
             if champ_id:
                 champ = _fighter_index.get(champ_id)
@@ -561,6 +569,19 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
                 rec   = champ.record_str if champ else "?"
                 console.print(
                     f"  {_WC_SHORT[wc]} {_TIER_SHORT[tier_key]:<12}"
+                    f"  [bold yellow]{name}[/bold yellow]"
+                    f"  [dim]{rec}[/dim]"
+                )
+                any_champ = True
+        # tier2: one belt per mid-major org (Session B1).
+        for org in MIDMAJOR_ORG_NAMES:
+            champ_id = get_champion_id(wc, "tier2", org)
+            if champ_id:
+                champ = _fighter_index.get(champ_id)
+                name  = champ.name if champ else f"<id {champ_id[:8]}>"
+                rec   = champ.record_str if champ else "?"
+                console.print(
+                    f"  {_WC_SHORT[wc]} {org:<28}"
                     f"  [bold yellow]{name}[/bold yellow]"
                     f"  [dim]{rec}[/dim]"
                 )
@@ -611,6 +632,57 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
     grand_total = sum(org_totals.values())
     ot.add_row("[bold]All[/bold]", *[f"[bold]{org_totals[o]}[/bold]" for o in ORG_NAMES], f"[bold]{grand_total}[/bold]")
     console.print(ot)
+    console.print()
+
+    # ── Apex FC roster cap check (Session B1, Part 3, deliverable d) ─────────
+    console.print(
+        f"[dim]  Apex FC roster vs soft cap (MAX_APEX_ROSTER={MAX_APEX_ROSTER}):[/dim]"
+    )
+    for wc in WEIGHT_CLASSES:
+        apex_n = sum(1 for f in pools[wc].get("tier4", []) if f.org == APEX_FC_NAME)
+        tag = "[yellow]" if apex_n > MAX_APEX_ROSTER else "[green]"
+        console.print(f"[dim]    {_WC_SHORT[wc]}: [/dim]{tag}{apex_n}[/{tag.strip('[]')}][dim] / {MAX_APEX_ROSTER}[/dim]")
+    console.print()
+
+    # ── Mid-major Org Distribution (Session B1, deliverable a) ───────────────
+    console.print()
+    console.print(Rule("[bold]Mid-Major Org Distribution (tier2)[/bold]"))
+    console.print()
+
+    all_midmajor = [f for f in all_fighters if f.tier == "tier2"]
+
+    _MIDMAJOR_ORG_SHORT: dict[str, str] = {
+        "Contender Series FC": "CSF", "Titan Fighting Championship": "TFC",
+        "Vanguard MMA": "VAN", "Gladius FC": "GLD",
+        "African Warriors Championship": "AWC", "Gulf Combat Series": "GCS",
+        "South Asia Combat League": "SACL", "Far East Circuit": "FEC",
+    }
+    # Eight org columns don't fit an 80-col console at the top-tier table's
+    # widths -- narrower fixed widths here (org codes are all <= 4 chars).
+    mmot2 = Table(box=box.SIMPLE_HEAD, show_lines=False, padding=(0, 0))
+    mmot2.add_column("Template", style="white", width=10, no_wrap=True)
+    for org in MIDMAJOR_ORG_NAMES:
+        mmot2.add_column(_MIDMAJOR_ORG_SHORT[org], justify="right", style="bold blue", width=4)
+    mmot2.add_column("Total", justify="right", style="dim", width=5)
+
+    mm_templates_seen = sorted({f.template for f in all_midmajor})
+    mm_org_totals = {org: 0 for org in MIDMAJOR_ORG_NAMES}
+    for tmpl in mm_templates_seen:
+        tmpl_fighters = [f for f in all_midmajor if f.template == tmpl]
+        row = [_TEMPLATE_SHORT.get(tmpl, tmpl)]
+        for org in MIDMAJOR_ORG_NAMES:
+            n = sum(1 for f in tmpl_fighters if f.org == org)
+            mm_org_totals[org] += n
+            row.append(str(n))
+        row.append(str(len(tmpl_fighters)))
+        mmot2.add_row(*row)
+    mm_grand_total = sum(mm_org_totals.values())
+    mmot2.add_row(
+        "[bold]All[/bold]",
+        *[f"[bold]{mm_org_totals[o]}[/bold]" for o in MIDMAJOR_ORG_NAMES],
+        f"[bold]{mm_grand_total}[/bold]",
+    )
+    console.print(mmot2)
     console.print()
 
     # ── Standings — one table per weight class ───────────────────────────────
@@ -999,41 +1071,49 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
         console.print(tot)
         console.print()
 
-    # ── Mid-major "Ones to Watch" (top-5, simplified formula) ────────────────
+    # ── Mid-major "Ones to Watch" (top-5 PER ORG, Session B1) ────────────────
     console.print()
-    console.print(Rule("[bold]Mid-major \"Ones to Watch\" (tier2) — Top 5[/bold]"))
+    console.print(Rule("[bold]Mid-major \"Ones to Watch\" (tier2) — Per-Org Top 5[/bold]"))
     console.print(
         f"[dim]  Updated every {RANKINGS_UPDATE_INTERVAL} fights (same cadence as Elite)  |  "
-        f"Top {MIDMAJOR_LIST_SIZE} per division  |  simplified formula, no matchmaking gate[/dim]"
+        f"Top {MIDMAJOR_LIST_SIZE} per (division, org)  |  simplified formula, no matchmaking gate[/dim]"
+    )
+    console.print(
+        "[dim]  Org Identity Session B1: eight mid-major orgs, each with their own "
+        "top-5 list and champion.[/dim]"
     )
     console.print()
 
     for wc in WEIGHT_CLASSES:
-        mm_rankings = get_midmajor_rankings(wc)
-        champ_id = get_champion_id(wc, "tier2")
-        champ = next((f for f in pools[wc].get("tier2", []) if f.fighter_id == champ_id), None) if champ_id else None
+        midmajor_pool_wc = pools[wc].get("tier2", [])
+        console.print(f"[bold]{wc.title()} ({_WC_SHORT[wc]})[/bold]  [dim]{len(midmajor_pool_wc)} in Mid-major pool[/dim]")
 
-        header = f"[bold]{wc.title()} ({_WC_SHORT[wc]})[/bold]"
-        if champ:
-            header += f"  [dim]Champion:[/dim] [bold yellow]{champ.name}[/bold yellow]"
-        console.print(header)
+        for org in MIDMAJOR_ORG_NAMES:
+            org_fighters_wc = [f for f in midmajor_pool_wc if f.org == org]
+            mm_rankings = get_midmajor_org_rankings(wc, org)
+            champ_id = get_champion_id(wc, "tier2", org)
+            champ = next((f for f in org_fighters_wc if f.fighter_id == champ_id), None) if champ_id else None
 
-        if not mm_rankings:
-            console.print("[dim]  No ones-to-watch yet.[/dim]")
-            console.print()
-            continue
+            header = f"  [bold]{org}[/bold]  [dim]({len(org_fighters_wc)} fighters)[/dim]"
+            if champ:
+                header += f"  [dim]Champion:[/dim] [bold yellow]{champ.name}[/bold yellow]"
+            console.print(header)
 
-        mmt = Table(box=box.SIMPLE_HEAD, show_lines=False, padding=(0, 1))
-        mmt.add_column("#",     justify="right", style="dim",         width=3)
-        mmt.add_column("Fighter",                style="white",       min_width=16, max_width=18)
-        mmt.add_column("Rec",   justify="center", style="bold",       width=5)
-        mmt.add_column("Score", justify="right",  style="bold yellow", width=5)
+            if not mm_rankings:
+                console.print("[dim]    No ones-to-watch yet.[/dim]")
+                continue
 
-        for e in mm_rankings:
-            f = e.fighter
-            w2, l2 = f.record_by_tier("tier2")
-            mmt.add_row(str(e.rank), f.name, f"{w2}-{l2}", f"{e.score:.3f}")
-        console.print(mmt)
+            mmt = Table(box=box.SIMPLE_HEAD, show_lines=False, padding=(0, 1))
+            mmt.add_column("#",     justify="right", style="dim",         width=3)
+            mmt.add_column("Fighter",                style="white",       min_width=16, max_width=18)
+            mmt.add_column("Rec",   justify="center", style="bold",       width=5)
+            mmt.add_column("Score", justify="right",  style="bold yellow", width=5)
+
+            for e in mm_rankings:
+                f = e.fighter
+                w2, l2 = f.record_by_tier("tier2")
+                mmt.add_row(str(e.rank), f.name, f"{w2}-{l2}", f"{e.score:.3f}")
+            console.print(mmt)
         console.print()
 
     # ── Scout-Notice Fast-Track Promotions ────────────────────────────────────

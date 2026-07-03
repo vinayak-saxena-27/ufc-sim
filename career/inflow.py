@@ -251,6 +251,18 @@ def generate_crossover(weight_class: str) -> tuple[Fighter, str, str]:
         hype=hype,
         **attrs,
     )
+    # Org Identity sessions: crossovers/laterals construct Fighter directly
+    # (not via career.tiers.generate_tier_fighter), so they were missed by
+    # Session A/B1's generation-time org-assignment hooks until now. A
+    # transcendent-caliber crossover CAN land straight at tier2/tier4.
+    if tier_key == "tier2":
+        from orgs.org_registry import assign_midmajor_org
+        assign_midmajor_org(fighter)
+        fighter.org_start_day = 0
+    elif tier_key == "tier4":
+        from orgs.org_registry import assign_org
+        assign_org(fighter)
+        fighter.org_start_day = 0
     return fighter, sport, caliber
 
 
@@ -353,4 +365,12 @@ def generate_lateral(weight_class: str) -> tuple[Fighter, str]:
         hype=hype,
         **attrs,
     )
+    if tier_key == "tier2":
+        from orgs.org_registry import assign_midmajor_org
+        assign_midmajor_org(fighter)
+        fighter.org_start_day = 0
+    elif tier_key == "tier4":
+        from orgs.org_registry import assign_org
+        assign_org(fighter)
+        fighter.org_start_day = 0
     return fighter, tier_key

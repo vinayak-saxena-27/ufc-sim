@@ -8,7 +8,7 @@ from career.tiers import TIER_LEVELS
 from career.academies import ACADEMY_PIPELINE
 from career.rankings import is_eligible_vs_ranked, get_ranked_ids, get_rankings, RANKINGS_SIZE
 from career.org_rankings import get_org_ranked_ids, get_org_rankings
-from orgs.org_registry import assign_org
+from orgs.org_registry import assign_org, assign_midmajor_org, capture_midmajor_feed
 from sim_calendar import get_sim_day
 
 # ─── Tuning constants ─────────────────────────────────────────────────────────
@@ -415,12 +415,15 @@ def apply_tier_transitions(
     divisions via tier transitions. Only the pool membership changes; sub-attributes
     and overall are never modified.
 
-    Org Identity session: a promotion INTO tier4 assigns an org (same
-    template-weighted logic as tier4-generated fighters, see
-    orgs/org_registry.py::assign_org) and stamps org_start_day. A demotion OUT
-    of tier4 clears org (so a later re-promotion draws a fresh org rather than
-    silently reusing a stale one) -- org movement mechanics (Part 6) only
-    apply to fighters CURRENTLY at tier4.
+    Org Identity sessions: entering tier2 (mid-major) or tier4 (top-tier)
+    assigns an org (career/orgs.org_registry.assign_midmajor_org /
+    assign_org) and stamps org_start_day; entering tier3 ("Top-org btm-15",
+    which stays a generic org-less pool) from tier2 captures a feed
+    preference instead (capture_midmajor_feed) so assign_org() can route the
+    fighter toward their mid-major's fed top-tier org once they reach tier4.
+    Leaving tier4 downward or tier2 downward clears org entirely (tier1/tier3
+    have no org concept) so a later re-promotion never silently reuses a
+    stale org.
     """
     wc  = fighter.weight_class
     idx = TIER_LEVELS.index(fighter.tier)
@@ -429,7 +432,12 @@ def apply_tier_transitions(
         pools[wc][fighter.tier].remove(fighter)
         fighter.tier = TIER_LEVELS[idx + 1]
         pools[wc][fighter.tier].append(fighter)
-        if fighter.tier == "tier4":
+        if fighter.tier == "tier2":
+            assign_midmajor_org(fighter)
+            fighter.org_start_day = get_sim_day()
+        elif fighter.tier == "tier3":
+            capture_midmajor_feed(fighter)
+        elif fighter.tier == "tier4":
             assign_org(fighter)
             fighter.org_start_day = get_sim_day()
         return fighter.tier
@@ -443,6 +451,16 @@ def apply_tier_transitions(
             fighter.org = ""
             fighter.org_start_day = -1
             fighter.org_arrived_pre_ranked = False
+        if fighter.tier == "tier2":
+            # Demoted INTO mid-major from tier3 (org-less) -- needs a fresh
+            # org assignment, same as promoting up into tier2 from tier1.
+            assign_midmajor_org(fighter)
+            fighter.org_start_day = get_sim_day()
+        elif fighter.tier == "tier1":
+            # Demoted OUT of mid-major -- tier1 (Regional) has no org concept.
+            fighter.org = ""
+            fighter.org_start_day = -1
+            fighter.midmajor_feed_org = ""
         return fighter.tier
 
     return None

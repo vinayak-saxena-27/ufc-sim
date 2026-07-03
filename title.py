@@ -64,7 +64,8 @@ from career.cuts import maybe_evaluate_cut
 from career.retirement import maybe_evaluate_retirement
 from career.rankings import get_rankings, is_eligible_vs_ranked, RankingEntry, RANKINGS_SIZE
 from career.org_rankings import get_org_rankings
-from orgs.org_registry import THE_LEAGUE_NAME, decision_mode_for_org
+from career.nonelite_rankings import get_midmajor_org_rankings
+from orgs.org_registry import THE_LEAGUE_NAME, MIDMAJOR_ORG_NAMES, decision_mode_for_org
 from career.hype import (
     update_hype_after_fight, apply_title_hype,
     title_win_bonus, title_defense_bonus, title_loss_penalty,
@@ -150,7 +151,7 @@ def fights_until_next_title_fight(weight_class: str, tier_key: str, org: str = "
     Apex-poach mid-title-run refusal case -- there's no separate per-fighter
     schedule anywhere in this codebase, just this pool-level countdown, so
     that's what "imminent title defense" means here."""
-    key = (weight_class, tier_key, org if tier_key == "tier4" else "")
+    key = (weight_class, tier_key, org if tier_key in ("tier2", "tier4") else "")
     return TITLE_FIGHT_INTERVAL - _fight_counters.get(key, 0)
 
 
@@ -161,12 +162,17 @@ def _find_champion(pool: list[Fighter], champion_id: str) -> Fighter | None:
 
 
 def _rankings_for(weight_class: str, org: str) -> list[RankingEntry]:
-    """org="" (tier1-3): rankings.get_rankings() (unchanged).
+    """org="" (tier0/1/3): rankings.get_rankings() (unchanged -- this is
+    actually only ever called for tier2/tier4 in practice since those are the
+    only org-bearing tiers, but stays a safe fallback).
     org=<Apex FC|Eastern Grand Prix> (tier4): the org-specific list
-    (career/org_rankings.py) instead of the old combined tier4 list —
-    matches "a fighter appears in the rankings for their current org only"
-    (Org Identity session, Part 2). The League never reaches this path (see
-    maybe_run_title_fight's early return)."""
+    (career/org_rankings.py) — matches "a fighter appears in the rankings for
+    their current org only" (Session A, Part 2). The League never reaches
+    this path (see maybe_run_title_fight's early return).
+    org=<one of the eight mid-major orgs> (tier2, Session B1): the mid-major
+    org-specific list (career/nonelite_rankings.py)."""
+    if org in MIDMAJOR_ORG_NAMES:
+        return get_midmajor_org_rankings(weight_class, org)
     if org:
         return get_org_rankings(weight_class, org)
     return get_rankings(weight_class)
@@ -313,11 +319,11 @@ def maybe_run_title_fight(
 
     Call once per regular fight using fighter A's weight_class and tier (captured
     before tier transitions, so the counter reflects where the fight actually
-    took place). For tier4, callers must also pass top_tier_org = fighter A's
-    Fighter.org (Apex FC / The League / Eastern Grand Prix) -- each top-tier org
-    now runs its own independent title-fight cadence and belt (Org Identity
-    session, Part 2). Non-tier4 callers omit it (default "" = the pre-existing
-    behavior, unchanged).
+    took place). For tier4 and tier2, callers must also pass top_tier_org =
+    fighter A's Fighter.org (top-tier org name, or one of the eight mid-major
+    org names -- Session B1) -- each org now runs its own independent title-
+    fight cadence and belt. Non-tier2/tier4 callers omit it (default "" = the
+    pre-existing behavior, unchanged).
 
     `org` (unrelated parameter, pre-existing) is just the FightResult.org tag
     ("league"/"campaign"/etc.) recorded on the simulated fight -- NOT the same
@@ -338,7 +344,7 @@ def maybe_run_title_fight(
     if tier_key == "tier4" and top_tier_org == THE_LEAGUE_NAME:
         return False   # The League's title comes from playoffs, not this path
 
-    reg_org = top_tier_org if tier_key == "tier4" else ""
+    reg_org = top_tier_org if tier_key in ("tier2", "tier4") else ""
     key = (weight_class, tier_key, reg_org)
     _fight_counters[key] = _fight_counters.get(key, 0) + 1
     if _fight_counters[key] < TITLE_FIGHT_INTERVAL:

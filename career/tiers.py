@@ -164,14 +164,18 @@ def generate_tier_fighter(
         style_flexibility=generate_style_flexibility(attrs["fight_iq"], template_name),
         **attrs,
     )
-    # Org Identity session: fighters generated directly into tier4 (initial
-    # population pyramid) need an org immediately, same as fighters who
-    # PROMOTE into tier4 mid-sim (see matchmaking.apply_tier_transitions) --
-    # otherwise the initial ~15/weight-class Elite pool would sit org-less
-    # (unranked-anywhere, un-matchmakeable under the hard-partition rule)
-    # until natural promotions eventually replace them. Local import avoids a
-    # tiers.py <-> orgs.org_registry import-order dependency at module load.
-    if tier_key == "tier4":
+    # Org Identity sessions: fighters generated directly into tier2 (mid-major)
+    # or tier4 (initial population pyramid) need an org immediately, same as
+    # fighters who PROMOTE into those tiers mid-sim (see
+    # matchmaking.apply_tier_transitions) -- otherwise the initial pyramid's
+    # tier2/tier4 fighters would sit org-less until natural promotions/
+    # demotions eventually replace them. Local import avoids a tiers.py <->
+    # orgs.org_registry import-order dependency at module load.
+    if tier_key == "tier2":
+        from orgs.org_registry import assign_midmajor_org
+        assign_midmajor_org(fighter)
+        fighter.org_start_day = 0
+    elif tier_key == "tier4":
         from orgs.org_registry import assign_org
         assign_org(fighter)
         fighter.org_start_day = 0

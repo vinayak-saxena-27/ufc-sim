@@ -73,6 +73,7 @@ from career.rankings import (
     _confidence, _recency_weighted_win_rate,
     _W_WIN_RATE, _W_QUALITY, _W_HYPE, _HYPE_NORM,
 )
+from orgs.org_registry import MIDMAJOR_ORG_NAMES
 from sim_calendar import days_since, _last_stamped_day
 
 
@@ -104,6 +105,16 @@ _toporg_rankings_by_wc:   dict[str, list[RankingEntry]] = {}
 _midmajor_ranked_ids: set[str] = set()
 _toporg_ranked_ids:   set[str] = set()
 
+# Per-org mid-major rankings (Org Identity Session B1, Part 4). Kept alongside
+# (not replacing) the combined _midmajor_rankings_by_wc above -- same
+# "leave the combined computation alive, additive per-org lists on top"
+# precedent as Session A's career/org_rankings.py for tier4. The combined
+# list is no longer consulted by scout-notice or the sim.py display (both
+# moved to per-org), but nothing stops it from still being computed; kept for
+# minimal disruption in case anything else reads get_midmajor_rankings().
+_midmajor_org_rankings_by_wc_org: dict[tuple[str, str], list[RankingEntry]] = {}
+_midmajor_org_ranked_ids: dict[str, set[str]] = {org: set() for org in MIDMAJOR_ORG_NAMES}
+
 
 def reset_nonelite_rankings() -> None:
     """Clear all cached non-Elite rankings and ranked-id sets. Call at sim start."""
@@ -111,11 +122,24 @@ def reset_nonelite_rankings() -> None:
     _toporg_rankings_by_wc.clear()
     _midmajor_ranked_ids.clear()
     _toporg_ranked_ids.clear()
+    _midmajor_org_rankings_by_wc_org.clear()
+    for org in MIDMAJOR_ORG_NAMES:
+        _midmajor_org_ranked_ids[org] = set()
 
 
 def get_midmajor_rankings(weight_class: str) -> list[RankingEntry]:
     """Current cached Mid-major top-5 for a weight class (may be empty)."""
     return _midmajor_rankings_by_wc.get(weight_class, [])
+
+
+def get_midmajor_org_rankings(weight_class: str, org: str) -> list[RankingEntry]:
+    """Current cached Mid-major top-5 for one (weight_class, org) pair (Part 4).
+    A fighter appears here only under their CURRENT mid-major org."""
+    return _midmajor_org_rankings_by_wc_org.get((weight_class, org), [])
+
+
+def get_midmajor_org_ranked_ids(org: str) -> set[str]:
+    return _midmajor_org_ranked_ids.get(org, set())
 
 
 def get_toporg_rankings(weight_class: str) -> list[RankingEntry]:
@@ -203,20 +227,36 @@ def compute_tier_rankings(
 
 
 def update_nonelite_rankings(pools: dict[str, dict[str, list[Fighter]]]) -> None:
-    """Recompute Mid-major (top-5) and Top-org (top-15) rankings for all
-    weight classes. Call on the same cadence as rankings.update_rankings()
-    (sim.py's RANKINGS_UPDATE_INTERVAL block) -- not a separate cadence."""
+    """Recompute Mid-major (top-5, combined AND per-org) and Top-org (top-15)
+    rankings for all weight classes. Call on the same cadence as
+    rankings.update_rankings() (sim.py's RANKINGS_UPDATE_INTERVAL block) --
+    not a separate cadence."""
     global _midmajor_ranked_ids, _toporg_ranked_ids
 
     new_mm_ids: set[str] = set()
     new_to_ids: set[str] = set()
+    new_mm_org_ids: dict[str, set[str]] = {org: set() for org in MIDMAJOR_ORG_NAMES}
     for wc, tier_pools in pools.items():
+        midmajor_pool = tier_pools.get("tier2", [])
+
         mm_entries = compute_tier_rankings(
-            tier_pools.get("tier2", []), "tier2", _midmajor_ranked_ids,
+            midmajor_pool, "tier2", _midmajor_ranked_ids,
             MIDMAJOR_LIST_SIZE, MIDMAJOR_QUALITY_NORM,
         )
         _midmajor_rankings_by_wc[wc] = mm_entries
         new_mm_ids.update(e.fighter.fighter_id for e in mm_entries)
+
+        # Per-org mid-major top-5 (Part 4) -- same tier-generic
+        # compute_tier_rankings reused directly on an org-filtered subset,
+        # exactly like career/org_rankings.py does for tier4.
+        for org in MIDMAJOR_ORG_NAMES:
+            org_fighters = [f for f in midmajor_pool if f.org == org]
+            org_entries = compute_tier_rankings(
+                org_fighters, "tier2", _midmajor_org_ranked_ids[org],
+                MIDMAJOR_LIST_SIZE, MIDMAJOR_QUALITY_NORM,
+            )
+            _midmajor_org_rankings_by_wc_org[(wc, org)] = org_entries
+            new_mm_org_ids[org].update(e.fighter.fighter_id for e in org_entries)
 
         to_entries = compute_tier_rankings(
             tier_pools.get("tier3", []), "tier3", _toporg_ranked_ids,
@@ -227,6 +267,8 @@ def update_nonelite_rankings(pools: dict[str, dict[str, list[Fighter]]]) -> None
 
     _midmajor_ranked_ids = new_mm_ids
     _toporg_ranked_ids   = new_to_ids
+    for org in MIDMAJOR_ORG_NAMES:
+        _midmajor_org_ranked_ids[org] = new_mm_org_ids[org]
 
 
 # ── Part 2: Scout-notice promotion ──────────────────────────────────────────
@@ -242,7 +284,16 @@ CHAMPION_BONUS_MULT: float = 1.5
 """Extra multiplier on top of the rank-position modifier when the fighter
 also holds their tier's title -- "champion" is a stronger signal than mere
 rank position, consistent with Regional champions being the primary
-Mid-major fast-track signal despite Regional having no formal list at all."""
+Mid-major fast-track signal despite Regional having no formal list at all.
+Applies at every tier EXCEPT tier2 -- see MIDMAJOR_CHAMPION_RETENTION_MULT."""
+
+MIDMAJOR_CHAMPION_RETENTION_MULT: float = 0.4
+"""Org Identity Session B1, Part 3 (Apex over-concentration fix): mid-major
+(tier2) champions get a REDUCTION instead of CHAMPION_BONUS_MULT's boost --
+'king of their own org' has real appeal, unlike Regional/Top-org champions
+who are more clearly outgrowing their level. This DELIBERATELY diverges from
+the boost every other tier's champions get; confirmed with the user before
+building (the two effects directly conflicted for tier2 otherwise)."""
 
 SCOUT_PIPELINE_SCALE: float = 0.03
 """Same functional form as development.py's _pipeline_modifier
@@ -274,9 +325,13 @@ def _rank_position_modifier(rank: int | None, list_size: int) -> float:
     return RANK_MOD_MAX - (RANK_MOD_MAX - RANK_MOD_MIN) * frac
 
 
-def _rank_modifier(rank: int | None, list_size: int, is_champion: bool) -> float:
+def _rank_modifier(rank: int | None, list_size: int, is_champion: bool, from_tier: str = "") -> float:
     base = _rank_position_modifier(rank, list_size)
-    return base * CHAMPION_BONUS_MULT if is_champion else base
+    if not is_champion:
+        return base
+    if from_tier == "tier2":
+        return base * MIDMAJOR_CHAMPION_RETENTION_MULT
+    return base * CHAMPION_BONUS_MULT
 
 
 def _pipeline_modifier(academy_name: str) -> float:
@@ -297,10 +352,12 @@ def _recency_modifier(fighter: Fighter) -> float:
     return max(RECENCY_MOD_FLOOR, 1.0 - gap / RECENCY_MOD_DECAY_DAYS)
 
 
-def _p_scout_notice(fighter: Fighter, rank: int | None, list_size: int, is_champion: bool) -> float:
+def _p_scout_notice(
+    fighter: Fighter, rank: int | None, list_size: int, is_champion: bool, from_tier: str = "",
+) -> float:
     return (
         BASE_SCOUT_PROB
-        * _rank_modifier(rank, list_size, is_champion)
+        * _rank_modifier(rank, list_size, is_champion, from_tier)
         * _pipeline_modifier(fighter.academy)
         * _hype_modifier(fighter.hype)
         * _recency_modifier(fighter)
@@ -350,13 +407,23 @@ def _execute_scout_promotion(
     fighter.tier = to_tier
     pools[wc][to_tier].append(fighter)
 
-    # Org Identity session: a scout-notice promotion into tier4 needs an org
-    # assignment too, same as a deterministic promotion (matchmaking.py) or
-    # initial tier4 generation (career/tiers.py) -- local import to avoid a
-    # module-load-order dependency, same pattern used in those two call sites.
-    if to_tier == "tier4":
+    # Org Identity sessions: scout-notice promotion needs the SAME org
+    # handling as a deterministic promotion (matchmaking.apply_tier_transitions)
+    # -- tier2 entry assigns a mid-major org, tier3 entry captures the feed
+    # preference (tier3 stays org-less), tier4 entry assigns a top-tier org
+    # (consulting any captured feed preference -- see assign_org()'s
+    # midmajor_feed_org handling). Local imports avoid a module-load-order
+    # dependency, same pattern used at the other org-assignment call sites.
+    from sim_calendar import get_sim_day
+    if to_tier == "tier2":
+        from orgs.org_registry import assign_midmajor_org
+        assign_midmajor_org(fighter)
+        fighter.org_start_day = get_sim_day()
+    elif to_tier == "tier3":
+        from orgs.org_registry import capture_midmajor_feed
+        capture_midmajor_feed(fighter)
+    elif to_tier == "tier4":
         from orgs.org_registry import assign_org
-        from sim_calendar import get_sim_day
         assign_org(fighter)
         fighter.org_start_day = get_sim_day()
 
@@ -379,7 +446,7 @@ def _maybe_promote(
 ) -> None:
     if is_removed(fighter.fighter_id):
         return
-    p = _p_scout_notice(fighter, rank, list_size, is_champion)
+    p = _p_scout_notice(fighter, rank, list_size, is_champion, from_tier)
     if random.random() < p:
         _execute_scout_promotion(fighter, pools, from_tier, fight_num, rank, p, is_champion)
 
@@ -390,8 +457,8 @@ def maybe_apply_scout_notice(
     """
     Evaluate the scout-notice fast-track for every eligible fighter across
     all weight classes: Regional champions (-> Mid-major), Mid-major top-5
-    (-> Top-org), Top-org top-15 (-> Elite). Call right after
-    update_nonelite_rankings() (which itself should follow
+    PER ORG (-> Top-org, Org Identity Session B1), Top-org top-15 (-> Elite).
+    Call right after update_nonelite_rankings() (which itself should follow
     rankings.update_rankings()) so rank data and champion registries are
     fresh. Purely additive to matchmaking.check_promotion/check_demotion,
     which are not called or modified here.
@@ -404,12 +471,16 @@ def maybe_apply_scout_notice(
             if champ1 is not None:
                 _maybe_promote(champ1, "tier1", pools, fight_num, rank=None, list_size=1, is_champion=True)
 
-        # Mid-major top-5 -> Top-org
-        champ2_id = get_champion_id(wc, "tier2")
-        for entry in get_midmajor_rankings(wc):
-            is_champ = entry.fighter.fighter_id == champ2_id
-            _maybe_promote(entry.fighter, "tier2", pools, fight_num,
-                            rank=entry.rank, list_size=MIDMAJOR_LIST_SIZE, is_champion=is_champ)
+        # Mid-major top-5 PER ORG -> Top-org (Session B1, Part 4: replaces
+        # the combined top-5 iteration -- each of the eight mid-major orgs'
+        # own top-5 is evaluated separately, using that org's own champion
+        # as the champion signal).
+        for org in MIDMAJOR_ORG_NAMES:
+            champ2_id = get_champion_id(wc, "tier2", org)
+            for entry in get_midmajor_org_rankings(wc, org):
+                is_champ = entry.fighter.fighter_id == champ2_id
+                _maybe_promote(entry.fighter, "tier2", pools, fight_num,
+                                rank=entry.rank, list_size=MIDMAJOR_LIST_SIZE, is_champion=is_champ)
 
         # Top-org top-15 -> Elite
         champ3_id = get_champion_id(wc, "tier3")
