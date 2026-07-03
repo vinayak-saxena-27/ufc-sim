@@ -305,17 +305,15 @@ def pick_opponent(
 
 
 def _recent_tier_fights(fighter: Fighter, window: int) -> list:
-    """Last `window` non-exhibition fight-history entries tagged with the fighter's tier.
+    """Last `window` fight-history entries tagged with the fighter's tier.
 
-    Scheduled Elite density fights (org="exhibition") are excluded so that fighters
-    who participate in 2x as many fights don't hit the demotion window faster than
-    the window was calibrated for.  Scheduled fights still write to fight_history
-    and contribute to ranking scores — only demotion and promotion checks skip them.
+    Scheduled Elite density fights (matchmaking.ELITE_FIGHT_INTERVAL) count
+    here like any other fight — no special treatment. An Elite fighter who
+    gets extra scheduled bouts will cycle through this window somewhat
+    faster than a fighter in another tier; that's an accepted consequence
+    of fighting more often, not something this window filters around.
     """
-    tier_fights = [
-        r for r in fighter.fight_history
-        if r.tier == fighter.tier and r.org != "exhibition"
-    ]
+    tier_fights = [r for r in fighter.fight_history if r.tier == fighter.tier]
     return tier_fights[-window:]
 
 

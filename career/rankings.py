@@ -155,7 +155,15 @@ def _score_fighter(
     Returns (total_score, wr_component, quality_component, hype_component,
              n_elite_fights, n_ranked_wins).
     """
-    tier4_fights = [r for r in fighter.fight_history if r.tier == "tier4"]
+    # Only count tier4 fights from the fighter's CURRENT weight class -- a fighter
+    # who moved divisions shouldn't have their old-division history count toward
+    # their new-division ranking. weight_class == "" is pre-existing fight history
+    # recorded before this field existed; included rather than excluded so long-
+    # career fighters aren't unfairly penalized for fights that predate the field.
+    tier4_fights = [
+        r for r in fighter.fight_history
+        if r.tier == "tier4" and (r.weight_class == fighter.weight_class or r.weight_class == "")
+    ]
     n = len(tier4_fights)
 
     if n == 0:
@@ -248,6 +256,13 @@ def get_rankings(weight_class: str) -> list[RankingEntry]:
 def get_ranked_ids() -> set[str]:
     """Return the set of fighter_ids currently in any weight class's top-15."""
     return _ranked_ids
+
+
+def is_ranked(fighter: Fighter) -> bool:
+    """True if fighter is currently in any weight class's top-15. Pure accessor
+    over get_ranked_ids() -- does not touch ranking computation. Used by
+    career/hype.py to scale win hype by opponent quality."""
+    return fighter.fighter_id in _ranked_ids
 
 
 def reset_rankings() -> None:

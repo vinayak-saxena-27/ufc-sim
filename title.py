@@ -63,6 +63,10 @@ from career.tiers import TIER_RULESET
 from career.cuts import maybe_evaluate_cut
 from career.retirement import maybe_evaluate_retirement
 from career.rankings import get_rankings, is_eligible_vs_ranked, RankingEntry, RANKINGS_SIZE
+from career.hype import (
+    update_hype_after_fight, apply_title_hype,
+    title_win_bonus, title_defense_bonus, title_loss_penalty,
+)
 from sim_calendar import get_sim_day, inactivity_percentile
 
 
@@ -119,11 +123,17 @@ class TitleFightRecord:
 _fight_counters: dict[tuple[str, str], int]  = {}
 _title_history:  list[TitleFightRecord]       = []
 
+# fighter_id -> number of successful defenses THIS reign. Reset to 0 whenever
+# that fighter wins the belt (vacant or by dethroning); read (then incremented)
+# on each successful defense so the hype bonus diminishes reign-to-reign.
+_defense_counts: dict[str, int] = {}
+
 
 def reset_title_scheduling() -> None:
     """Clear fight counters and title history.  Call at the start of each sim."""
     _fight_counters.clear()
     _title_history.clear()
+    _defense_counts.clear()
 
 
 def get_title_history() -> list[TitleFightRecord]:
@@ -299,6 +309,7 @@ def maybe_run_title_fight(
     was_vacant  = False
     override    = None
     challenger_rank: int | None = None
+    prior_champion: Fighter | None = None   # set below only when an incumbent champ actually fought
 
     if champion_id is None:
         result = _pick_vacant_pair(pool, weight_class)
@@ -332,6 +343,7 @@ def maybe_run_title_fight(
             if challenger is None:
                 return False
             fa, fb = champ, challenger
+            prior_champion = champ
             challenger_rank = _get_fighter_rank(challenger, weight_class)
             champ_rank = _get_fighter_rank(champ, weight_class)
             override_tag = f" [{override}]" if override else ""
@@ -340,6 +352,25 @@ def maybe_run_title_fight(
                   f"vs {challenger.name} (rank={challenger_rank or 'NR'}){override_tag}")
 
     winner, loser = simulate_fight(fa, fb, org=org, is_title=True, sim_day=get_sim_day())
+
+    # Base per-fight hype update (finish/decision/adversity/style) -- title
+    # fights are still fights. Title-specific bonus below is additive on top.
+    update_hype_after_fight(winner, loser)
+    update_hype_after_fight(loser, winner)
+
+    # Title-specific hype event: win (vacant or dethrone) / defense / loss.
+    # Defense bonus diminishes with reign length; win/loss reset the winner's count.
+    if was_vacant:
+        apply_title_hype(winner, title_win_bonus())
+        _defense_counts[winner.fighter_id] = 0
+    elif winner.fighter_id == prior_champion.fighter_id:
+        n_prior_defenses = _defense_counts.get(winner.fighter_id, 0)
+        apply_title_hype(winner, title_defense_bonus(n_prior_defenses))
+        _defense_counts[winner.fighter_id] = n_prior_defenses + 1
+    else:
+        apply_title_hype(winner, title_win_bonus())
+        _defense_counts[winner.fighter_id] = 0
+        apply_title_hype(loser, title_loss_penalty())
 
     # award_title BEFORE tier transitions so the registry key matches the tier
     # the fight was contested at, not the tier the winner may be promoted into.

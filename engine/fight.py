@@ -7,6 +7,10 @@ from career.age import apply_age_to_fighter
 from career.development import apply_development_to_fighter
 from career.weight_cut import apply_cut_to_fighter
 
+# Fraction of a finish threshold that counts as "in danger" for the adversity/
+# comeback hype flag (Part 2, style-to-hype overhaul). First-pass estimate.
+ADVERSITY_PRESSURE_FRACTION: float = 0.65
+
 # ─── Tuning constants ─────────────────────────────────────────────────────────
 # Adjust these after reading smoke_test.py output.
 # SCALE:     Checked against the real-world career anchor in smoke_test.py — treat as a
@@ -62,6 +66,10 @@ def simulate_fight(
     no longer called from here.
     """
     from engine.fight_engine import simulate_full_fight
+    # Local import: engine.finish_check -> engine.phase_output -> engine.fight
+    # (for SCALE) would otherwise be a top-level cycle. Same pattern as the
+    # fight_engine import above.
+    from engine.finish_check import KO_TKO_THRESHOLD, SUBMISSION_THRESHOLD
 
     # Apply modifier layers before entering the engine (order matters for readability
     # and matches the fight-night timeline, not for correctness — all three deltas are
@@ -83,6 +91,27 @@ def simulate_fight(
     # For finishes the scores are partial-round, but stored for completeness.
     a_margin       = outcome.total_score_a - outcome.total_score_b
     rounds_n       = len(outcome.rounds)
+
+    # Phase-distribution summary, shared by both fighters (single timeline, not
+    # per-fighter) -- feeds the style-mixing development feedback hook.
+    time_standing = sum(r.time_in_phase.get("STANDING", 0.0) for r in outcome.rounds)
+    time_clinch   = sum(r.time_in_phase.get("CLINCH",   0.0) for r in outcome.rounds)
+    time_ground   = sum(r.time_in_phase.get("GROUND",   0.0) for r in outcome.rounds)
+
+    # Adversity/comeback: did the WINNER'S received pressure (the opponent's
+    # output that hit them) cross ADVERSITY_PRESSURE_FRACTION of a finish
+    # threshold at any point, and they still won? Pure read of the per-round
+    # pressure snapshots RoundResult now carries -- doesn't touch how pressure
+    # is computed or how finishes are detected.
+    a_won = winner is fighter_a
+    strike_floor = ADVERSITY_PRESSURE_FRACTION * KO_TKO_THRESHOLD
+    sub_floor    = ADVERSITY_PRESSURE_FRACTION * SUBMISSION_THRESHOLD
+    adversity_comeback = any(
+        (r.strike_pressure_a if not a_won else r.strike_pressure_b) >= strike_floor
+        or (r.sub_pressure_a if not a_won else r.sub_pressure_b) >= sub_floor
+        for r in outcome.rounds
+    )
+
     winner.fight_history.append(FightResult(
         opponent_name    = loser.name,
         outcome          = "win",
@@ -93,6 +122,11 @@ def simulate_fight(
         is_title         = is_title,
         rounds_completed = rounds_n,
         sim_day          = sim_day,
+        time_standing    = time_standing,
+        time_clinch      = time_clinch,
+        time_ground      = time_ground,
+        adversity_comeback = adversity_comeback,
+        weight_class     = winner.weight_class,
     ))
     loser.fight_history.append(FightResult(
         opponent_name    = winner.name,
@@ -104,5 +138,9 @@ def simulate_fight(
         is_title         = is_title,
         rounds_completed = rounds_n,
         sim_day          = sim_day,
+        time_standing    = time_standing,
+        time_clinch      = time_clinch,
+        time_ground      = time_ground,
+        weight_class     = loser.weight_class,
     ))
     return winner, loser

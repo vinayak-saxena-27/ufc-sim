@@ -24,10 +24,11 @@ import random
 from statistics import mean as _mean
 
 from career.fighter import Fighter
-from career.templates import TEMPLATES, _TEMPLATE_REGIONS, _sample_hype
+from career.templates import TEMPLATES, _TEMPLATE_REGIONS
 from career.tiers import TIER_CONFIG, ATTR_NOISE_STD
 from career.academies import pick_academy, regional_name
 from career.development import assign_prospect_tier
+from career.hype import generate_hype_seed
 
 
 # ── Crossover sport profiles ──────────────────────────────────────────────────
@@ -232,7 +233,7 @@ def generate_crossover(weight_class: str) -> tuple[Fighter, str, str]:
     age_params = _CALIBER_AGE_PARAMS[caliber]
     age = max(age_params[2], min(age_params[3], int(random.gauss(age_params[0], age_params[1]))))
 
-    hype = _sample_hype(attrs["power"], attrs["athleticism"]) + _CALIBER_HYPE_BOOST[caliber]
+    hype = generate_hype_seed(0.0) + _CALIBER_HYPE_BOOST[caliber]   # no academy pipeline for crossovers
     prospect_tier = _pick_crossover_prospect_tier(caliber)
 
     name_template = _SPORT_NAME_TEMPLATE[sport]
@@ -337,7 +338,7 @@ def generate_lateral(weight_class: str) -> tuple[Fighter, str]:
     age = max(ap[2], min(ap[3], int(random.gauss(ap[0], ap[1]))))
 
     hype_boost = _LATERAL_HYPE_BY_TIER[tier_key]
-    hype = _sample_hype(attrs["power"], attrs["athleticism"]) + academy.pipeline_strength + hype_boost
+    hype = generate_hype_seed(academy.pipeline_strength) + hype_boost
     prospect_tier = assign_prospect_tier()
 
     fighter = Fighter(

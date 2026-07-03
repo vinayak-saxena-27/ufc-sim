@@ -23,6 +23,22 @@ class FightResult:
     is_title:         bool  = False  # True if this was a title fight
     rounds_completed: int   = 0     # how many rounds actually ran (for round-count verification)
     sim_day:          int   = -1    # global simulated day the fight occurred; -1 = unstamped / pre-calendar
+    # Phase-distribution summary for this fight (seconds), shared by both fighters —
+    # phase is a single shared timeline, not independent per fighter. Populated by
+    # engine/fight.py from FightOutcome.rounds; consumed by the style-mixing
+    # development feedback hook (career/development.py).
+    time_standing:    float = 0.0
+    time_clinch:      float = 0.0
+    time_ground:      float = 0.0
+    # True if the WINNER survived meaningful finish-danger (received pressure
+    # crossed a threshold fraction at some point) and still won. Winner's record
+    # only -- a loser's FightResult never sets this. See engine/fight.py and
+    # career/hype.py (style-to-hype overhaul session).
+    adversity_comeback: bool = False
+    # Weight class the fight took place in. Empty string = pre-existing fight
+    # history recorded before this field existed (whatever division the fighter
+    # was in at the time -- see rankings.py's backward-compat handling).
+    weight_class: str = ""
 
 
 @dataclass
@@ -57,6 +73,12 @@ class Fighter:
     fight_iq:    float = 0.0
 
     hype: float = 0.0  # Decoupled from true skill — see templates.py for generation note.
+
+    # Voluntary style-mixing personality trait: willingness to operate outside the
+    # dominant phase even when able to pursue it. Uncapped, zero-centered — see
+    # career/style_mixing.py for the generation formula. High positive = diverse
+    # stylist; near zero = situational; low/negative = deliberate specialist.
+    style_flexibility: float = 0.0
 
     # Accumulated development gain from training over career so far.
     # Modified by advance_all_development() (annual sweep) and apply_win_development_boost()

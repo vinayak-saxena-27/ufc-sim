@@ -15,6 +15,7 @@ Fixes applied in session 4a-fix:
 """
 from __future__ import annotations
 
+import math
 import random
 from dataclasses import dataclass
 from enum import Enum
@@ -176,6 +177,130 @@ def _p_attempt(p_succ: float, stamina: float, attacker_abs_skill: float) -> floa
     return BASE_ATTEMPT_PROB * abs_floor * (TENDENCY_SCALE * p_succ) * (stamina / MAX_STAMINA)
 
 
+# ─── Voluntary style-mixing ────────────────────────────────────────────────────
+# Islam-test mechanic: a fighter with high style_flexibility voluntarily spends
+# meaningful time OUTSIDE their dominant phase, provided (a) the matchup is safe
+# enough to afford experimenting and (b) their absolute skill in the secondary
+# phase genuinely clears a floor (reuses _logistic_abs — the same absolute-skill
+# sigmoid as the Issue A fix above; one canonical version, not reimplemented).
+#
+# effective_mixing = style_flexibility * matchup_modifier * tier_modifier
+#   matchup_modifier: HIGH when the fighter clearly outclasses the opponent
+#     (safe to experiment), LOW when facing a peer/superior (lean into your best).
+#     Mapped from the overall gap through the same logistic used for sub-attribute
+#     contests (SKILL_SCALE=43) -- gap=0 -> 1.0 (neutral), consistent steepness
+#     with the rest of the calibration.
+#   tier_modifier: elite fighters are more well-rounded and can afford to mix;
+#     lower tiers fighting for their career mostly stick to what they know.
+#
+# The resulting per-fight scalar is squashed through tanh and clamped to >= 0:
+# negative/near-zero style_flexibility fighters (specialists) get a mixing
+# fraction of exactly 0 -- their transition tendency is completely unaffected,
+# i.e. they pursue their dominant phase exactly as the pre-mixing engine did.
+MIXING_TIER_MODIFIER: dict[str, float] = {
+    "tier0": 0.5,   # Amateur
+    "tier1": 0.7,   # Regional
+    "tier2": 0.85,  # Mid-major
+    "tier3": 1.0,   # Top-org btm-15
+    "tier4": 1.15,  # Top-org elite
+}
+MIXING_MATCHUP_MOD_MIN: float = 0.4   # matchup_modifier at a large negative overall gap
+MIXING_MATCHUP_MOD_MAX: float = 1.6   # matchup_modifier at a large positive overall gap
+MIXING_TANH_DIVISOR:    float = 15.0  # squashes effective_mixing into a bounded pull; first-pass
+MIXING_MODIFIER_SCALE:  float = 1.15  # max fractional dampen/boost on attempt tendency; first-pass.
+# NOTE: dominant-phase pursuit (e.g. a wrestler's DIRECT_TAKEDOWN) is only
+# ATTEMPTED probabilistically -- once it succeeds, staying in that phase is
+# passive and costs no further attempts. Suppressing attempt tendency alone
+# therefore needs a large scale to visibly redistribute time; tuned against
+# tests/verify_style_mixing.py's Islam-test target (25-40% standing time).
+MIXING_DAMPEN_FLOOR:    float = 0.1   # dominant-phase tendency never drops below this fraction
+
+
+def _phase_composite_skill(fighter: Fighter, phase: "Phase") -> float:
+    """Absolute-skill composite for a given phase -- same pairings used by
+    _transition_skills / phase_output.py, so 'is this phase viable at all'
+    reads the identical attribute mix as 'who wins a contest in this phase'."""
+    if phase == Phase.STANDING:
+        return fighter.boxing + fighter.kickboxing
+    if phase == Phase.CLINCH:
+        return fighter.clinch
+    return fighter.wrestling + 0.3 * fighter.athleticism  # Phase.GROUND
+
+
+def primary_phase(fighter: Fighter) -> "Phase":
+    """The phase this fighter's own attribute profile would most aggressively
+    pursue absent style-mixing -- i.e. their dominant phase. Used both to
+    modulate transition tendency here and (career/development.py) to decide
+    which post-fight phase-time counts as 'non-primary' for development feedback.
+    """
+    affinities = {p: _phase_composite_skill(fighter, p) for p in Phase}
+    return max(affinities, key=affinities.get)
+
+
+def _secondary_phase(fighter: Fighter) -> "Phase":
+    """The fighter's second-best phase by absolute composite skill -- the
+    concrete 'secondary tool' style-mixing deploys. Deliberately not just
+    'any non-primary phase': the absolute-skill gate (Part 3) must clamp on
+    THIS specific composite, otherwise dampening pursuit of the dominant phase
+    would leak free time into a phase the fighter is genuinely bad at (e.g. a
+    wrestler with terrible boxing but neutral clinch would otherwise gain
+    ungated standing time as a side effect of reduced takedown attempts)."""
+    affinities = {p: _phase_composite_skill(fighter, p) for p in Phase}
+    ordered = sorted(affinities, key=affinities.get, reverse=True)
+    return ordered[1]
+
+
+def _matchup_modifier(overall_gap: float) -> float:
+    """gap = fighter.overall - opponent.overall. gap=0 -> 1.0 (no boost/penalty)."""
+    return MIXING_MATCHUP_MOD_MIN + (MIXING_MATCHUP_MOD_MAX - MIXING_MATCHUP_MOD_MIN) * _logistic(overall_gap)
+
+
+def effective_mixing(fighter: Fighter, opponent: Fighter) -> float:
+    """Per-fight mixing appetite for `fighter` in this specific matchup."""
+    gap = fighter.overall - opponent.overall
+    matchup_mod = _matchup_modifier(gap)
+    tier_mod = MIXING_TIER_MODIFIER.get(fighter.tier, 1.0)
+    return fighter.style_flexibility * matchup_mod * tier_mod
+
+
+def _mixing_fraction(fighter: Fighter, opponent: Fighter) -> float:
+    """Bounded [0, ~1) pull toward secondary phases. Clamped at 0 for
+    negative/low style_flexibility -- specialists are simply unaffected,
+    not pushed further into specialism."""
+    return max(0.0, math.tanh(effective_mixing(fighter, opponent) / MIXING_TANH_DIVISOR))
+
+
+def _mixing_tendency_modifier(
+    attacker: Fighter, mix_frac: float,
+    attacker_primary: "Phase", attacker_secondary: "Phase", dest_phase: "Phase",
+) -> float:
+    """
+    Multiplicative modifier on a transition's attempt probability.
+
+    Both directions are gated by the SAME absolute-skill sigmoid (Part 3 /
+    Issue A gate), evaluated on the attacker's SECONDARY phase composite (their
+    concrete "second tool", not just any non-primary phase):
+      dest_phase == primary   -> DAMPEN (pursue the dominant phase slightly
+        less), scaled by the secondary-phase gate -- if the fighter has no
+        viable secondary option, dampening barely happens (nowhere to go).
+      dest_phase == secondary -> BOOST toward the fighter's actual secondary
+        tool, scaled by that same gate.
+      dest_phase == neither   -> no modifier (1.0). Mixing deploys the
+        fighter's designated secondary tool, not a random third phase.
+    A wrestler with genuinely bad boxing (-20) gets gate ~0 when STANDING is
+    their identified secondary -- the option isn't available to them regardless
+    of style_flexibility.
+    """
+    if mix_frac <= 0.0:
+        return 1.0
+    gate = _logistic_abs(_phase_composite_skill(attacker, attacker_secondary))
+    if dest_phase == attacker_primary:
+        return max(MIXING_DAMPEN_FLOOR, 1.0 - MIXING_MODIFIER_SCALE * mix_frac * gate)
+    if dest_phase == attacker_secondary:
+        return 1.0 + MIXING_MODIFIER_SCALE * mix_frac * gate
+    return 1.0
+
+
 # ─── Round simulation ─────────────────────────────────────────────────────────
 
 def simulate_round(
@@ -206,6 +331,16 @@ def simulate_round(
     stamina_a = initial_stamina_a
     stamina_b = initial_stamina_b
 
+    # Style-mixing: computed once per round (deterministic given both fighters'
+    # attributes -- no need to recompute per tick). mix_frac_x <= 0 for
+    # specialists short-circuits to a 1.0 (no-op) modifier everywhere below.
+    primary_a    = primary_phase(fighter_a)
+    primary_b    = primary_phase(fighter_b)
+    secondary_a  = _secondary_phase(fighter_a)
+    secondary_b  = _secondary_phase(fighter_b)
+    mix_frac_a   = _mixing_fraction(fighter_a, fighter_b)
+    mix_frac_b   = _mixing_fraction(fighter_b, fighter_a)
+
     # Top/bottom position in GROUND. Set when a takedown or clinch-to-ground
     # succeeds (attacker = top, defender = bottom). None outside of GROUND.
     # If initial_phase is GROUND with no prior takedown, fighter_a is treated as
@@ -229,22 +364,31 @@ def simulate_round(
             bottom = ground_bottom
             top    = ground_top
             stam   = stamina_a if bottom is fighter_a else stamina_b
+            if bottom is fighter_a:
+                bottom_primary, bottom_secondary, bottom_frac = primary_a, secondary_a, mix_frac_a
+            else:
+                bottom_primary, bottom_secondary, bottom_frac = primary_b, secondary_b, mix_frac_b
             a_skill, d_skill = _transition_skills(bottom, top, TransitionType.SCRAMBLE)
             p_succ = _logistic(a_skill - d_skill)
-            if random.random() < _p_attempt(p_succ, stam, a_skill):
+            mix_mod = _mixing_tendency_modifier(bottom, bottom_frac, bottom_primary, bottom_secondary, Phase.STANDING)
+            if random.random() < _p_attempt(p_succ, stam, a_skill) * mix_mod:
                 candidates.append((bottom, top, TransitionType.SCRAMBLE, p_succ))
         else:
             for t in _PHASE_TRANSITIONS[phase]:
+                dest = _TRANSITION_DEST[t]
+
                 # Fighter A as attacker
                 a_skill_a, d_skill_a = _transition_skills(fighter_a, fighter_b, t)
                 p_succ_a = _logistic(a_skill_a - d_skill_a)
-                if random.random() < _p_attempt(p_succ_a, stamina_a, a_skill_a):
+                mix_mod_a = _mixing_tendency_modifier(fighter_a, mix_frac_a, primary_a, secondary_a, dest)
+                if random.random() < _p_attempt(p_succ_a, stamina_a, a_skill_a) * mix_mod_a:
                     candidates.append((fighter_a, fighter_b, t, p_succ_a))
 
                 # Fighter B as attacker
                 a_skill_b, d_skill_b = _transition_skills(fighter_b, fighter_a, t)
                 p_succ_b = _logistic(a_skill_b - d_skill_b)
-                if random.random() < _p_attempt(p_succ_b, stamina_b, a_skill_b):
+                mix_mod_b = _mixing_tendency_modifier(fighter_b, mix_frac_b, primary_b, secondary_b, dest)
+                if random.random() < _p_attempt(p_succ_b, stamina_b, a_skill_b) * mix_mod_b:
                     candidates.append((fighter_b, fighter_a, t, p_succ_b))
 
         if not candidates:

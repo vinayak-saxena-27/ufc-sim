@@ -31,7 +31,13 @@ from matchmaking import (
 from career.labels import maybe_update_labels, reset_title_registry, update_labels, get_champion_id, CONTENDER
 from title import reset_title_scheduling, maybe_run_title_fight, get_title_history, TITLE_FIGHT_INTERVAL
 from career.age import advance_all_ages, reset_age_advancement
-from career.development import advance_all_development, apply_win_development_boost, reset_development_advancement
+from career.development import (
+    advance_all_development, apply_win_development_boost,
+    apply_phase_development_feedback, reset_development_advancement,
+)
+from career.hype import (
+    update_hype_after_fight, advance_all_hype_decay, reset_hype_decay,
+)
 from career.cuts import maybe_evaluate_cut, get_cut_log, reset_cut_registry
 from career.retirement import maybe_evaluate_retirement, maybe_retire_inactive, reset_retirement_scanning
 from career.weight_movement import maybe_evaluate_weight_move
@@ -93,6 +99,7 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
     reset_sim_clock()
     reset_age_advancement()
     reset_development_advancement()
+    reset_hype_decay()
     initialize_replenishment()
     reset_retirement_scanning()
     reset_elite_pairings()
@@ -147,6 +154,13 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
         # Win-triggered development boost — fires on the BASE fighter object (not the
         # effective copy used inside fight resolution), so the gain is durable.
         apply_win_development_boost(winner)
+        # Style-mixing feedback: fires for both winner and loser, gated on
+        # non-primary-phase time exposure for this fight (see development.py).
+        apply_phase_development_feedback(winner)
+        apply_phase_development_feedback(loser)
+        # Dynamic hype: base win/loss + style modifiers for both participants.
+        update_hype_after_fight(winner, loser)
+        update_hype_after_fight(loser, winner)
 
         # Apply tier transitions, label updates,
         # retirement (checked first), then cut (skips already-retired fighters).
@@ -181,6 +195,9 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
         # Development sweeps the same cadence; called after age so age_factor reflects
         # the just-incremented age (fighters who turned 23 this year get age_factor=0).
         advance_all_development(all_fighters)
+        # Hype decay: same annual cadence -- inactive fighters (including those who
+        # went quiet) lose buzz proportionally.
+        advance_all_hype_decay(all_fighters)
 
         # Advance any active win-and-vacate campaigns (weight_transfers.py) by one
         # directly-simulated fight each — self-initiated events, not triggered by
@@ -203,6 +220,9 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
         # ── Scheduled Elite fight (option b density fix) ─────────────────────
         # Injected additively every ELITE_FIGHT_INTERVAL main fights.  Non-Elite
         # fighters are unaffected; Elite pool replenishment rate is unchanged.
+        # These are fully normal fights — no special org tag, no exclusion from
+        # any downstream system (wins, losses, promotion, demotion, labels,
+        # rankings, hype, development all treat them like any other fight).
         if ELITE_FIGHT_INTERVAL > 0 and (i + 1) % ELITE_FIGHT_INTERVAL == 0:
             _ae = pick_scheduled_elite_a(pools)
             if _ae is not None:
@@ -212,8 +232,12 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
                     pass
                 else:
                     _ewc, _etier, _eday = _ae.weight_class, _ae.tier, get_sim_day()
-                    _ew, _el = simulate_fight(_ae, _be, org="exhibition", sim_day=_eday)
+                    _ew, _el = simulate_fight(_ae, _be, org="league", sim_day=_eday)
                     apply_win_development_boost(_ew)
+                    apply_phase_development_feedback(_ew)
+                    apply_phase_development_feedback(_el)
+                    update_hype_after_fight(_ew, _el)
+                    update_hype_after_fight(_el, _ew)
                     _erm: list = []
                     for _ef in (_ew, _el):
                         apply_tier_transitions(_ef, pools)
@@ -225,11 +249,12 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
                             _erm.append(_ef)
                     for _erf in _erm:
                         all_fighters[:] = [f for f in all_fighters if f is not _erf]
-                    maybe_run_title_fight(_ewc, _etier, pools, org="exhibition",
+                    maybe_run_title_fight(_ewc, _etier, pools, org="league",
                                          fight_num=i + 1, all_fighters=all_fighters)
                     advance_sim_clock()
                     advance_all_ages(all_fighters)
                     advance_all_development(all_fighters)
+                    advance_all_hype_decay(all_fighters)
 
         if debug:
             a_won = winner is a
