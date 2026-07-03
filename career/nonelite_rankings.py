@@ -350,6 +350,16 @@ def _execute_scout_promotion(
     fighter.tier = to_tier
     pools[wc][to_tier].append(fighter)
 
+    # Org Identity session: a scout-notice promotion into tier4 needs an org
+    # assignment too, same as a deterministic promotion (matchmaking.py) or
+    # initial tier4 generation (career/tiers.py) -- local import to avoid a
+    # module-load-order dependency, same pattern used in those two call sites.
+    if to_tier == "tier4":
+        from orgs.org_registry import assign_org
+        from sim_calendar import get_sim_day
+        assign_org(fighter)
+        fighter.org_start_day = get_sim_day()
+
     rec = ScoutNoticeRecord(
         fight_num=fight_num, fighter_name=fighter.name, fighter_id=fighter.fighter_id,
         weight_class=wc, from_tier=from_tier, to_tier=to_tier,

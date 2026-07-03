@@ -63,6 +63,8 @@ from career.tiers import TIER_RULESET
 from career.cuts import maybe_evaluate_cut
 from career.retirement import maybe_evaluate_retirement
 from career.rankings import get_rankings, is_eligible_vs_ranked, RankingEntry, RANKINGS_SIZE
+from career.org_rankings import get_org_rankings
+from orgs.org_registry import THE_LEAGUE_NAME, decision_mode_for_org
 from career.hype import (
     update_hype_after_fight, apply_title_hype,
     title_win_bonus, title_defense_bonus, title_loss_penalty,
@@ -141,15 +143,38 @@ def get_title_history() -> list[TitleFightRecord]:
     return list(_title_history)
 
 
+def fights_until_next_title_fight(weight_class: str, tier_key: str, org: str = "") -> int:
+    """How many more regular fights in this (weight_class, tier_key[, org]) pool
+    before a title fight is due. Used by orgs/org_movement.py (Part 6) to
+    operationalize 'has a scheduled title defense within N fights' for the
+    Apex-poach mid-title-run refusal case -- there's no separate per-fighter
+    schedule anywhere in this codebase, just this pool-level countdown, so
+    that's what "imminent title defense" means here."""
+    key = (weight_class, tier_key, org if tier_key == "tier4" else "")
+    return TITLE_FIGHT_INTERVAL - _fight_counters.get(key, 0)
+
+
 # ── Internal helpers ──────────────────────────────────────────────────────────
 
 def _find_champion(pool: list[Fighter], champion_id: str) -> Fighter | None:
     return next((f for f in pool if f.fighter_id == champion_id), None)
 
 
-def _get_fighter_rank(fighter: Fighter, weight_class: str) -> int | None:
-    """Return fighter's current rank in their weight class, or None if unranked."""
-    for entry in get_rankings(weight_class):
+def _rankings_for(weight_class: str, org: str) -> list[RankingEntry]:
+    """org="" (tier1-3): rankings.get_rankings() (unchanged).
+    org=<Apex FC|Eastern Grand Prix> (tier4): the org-specific list
+    (career/org_rankings.py) instead of the old combined tier4 list —
+    matches "a fighter appears in the rankings for their current org only"
+    (Org Identity session, Part 2). The League never reaches this path (see
+    maybe_run_title_fight's early return)."""
+    if org:
+        return get_org_rankings(weight_class, org)
+    return get_rankings(weight_class)
+
+
+def _get_fighter_rank(fighter: Fighter, weight_class: str, org: str = "") -> int | None:
+    """Return fighter's current rank in their weight class(+org), or None if unranked."""
+    for entry in _rankings_for(weight_class, org):
         if entry.fighter.fighter_id == fighter.fighter_id:
             return entry.rank
     return None
@@ -180,6 +205,7 @@ def _pick_challenger(
     champion_id: str,
     tier_key: str,
     weight_class: str,
+    org: str = "",
 ) -> tuple[Fighter | None, str | None]:
     """Rankings-driven challenger selection for a title defense.
 
@@ -199,7 +225,7 @@ def _pick_challenger(
             eligible = gate_eligible
 
     eligible_ids = {f.fighter_id for f in eligible}
-    rankings = get_rankings(weight_class)
+    rankings = _rankings_for(weight_class, org)
     ranked_eligible = [e for e in rankings if e.fighter.fighter_id in eligible_ids]
 
     if not ranked_eligible:
@@ -227,6 +253,7 @@ def _pick_challenger(
 def _pick_vacant_pair(
     pool: list[Fighter],
     weight_class: str,
+    org: str = "",
 ) -> tuple[tuple[Fighter, Fighter], str | None] | None:
     """Rankings-driven selection for a vacant-belt fight.
 
@@ -240,7 +267,7 @@ def _pick_vacant_pair(
         return None
 
     eligible_ids = {f.fighter_id for f in pool}
-    rankings = get_rankings(weight_class)
+    rankings = _rankings_for(weight_class, org)
     ranked_eligible = [e for e in rankings if e.fighter.fighter_id in eligible_ids]
 
     if len(ranked_eligible) < 2:
@@ -277,14 +304,29 @@ def maybe_run_title_fight(
     org:          str = "league",
     fight_num:    int = 0,
     all_fighters: list[Fighter] | None = None,
+    top_tier_org: str = "",
 ) -> bool:
     """
-    Register one regular fight's worth of activity for this (weight_class, tier_key).
-    If the pool's counter reaches TITLE_FIGHT_INTERVAL, run a title fight and reset.
+    Register one regular fight's worth of activity for this (weight_class, tier_key
+    [, top_tier_org]). If the pool's counter reaches TITLE_FIGHT_INTERVAL, run a
+    title fight and reset.
 
     Call once per regular fight using fighter A's weight_class and tier (captured
     before tier transitions, so the counter reflects where the fight actually
-    took place).
+    took place). For tier4, callers must also pass top_tier_org = fighter A's
+    Fighter.org (Apex FC / The League / Eastern Grand Prix) -- each top-tier org
+    now runs its own independent title-fight cadence and belt (Org Identity
+    session, Part 2). Non-tier4 callers omit it (default "" = the pre-existing
+    behavior, unchanged).
+
+    `org` (unrelated parameter, pre-existing) is just the FightResult.org tag
+    ("league"/"campaign"/etc.) recorded on the simulated fight -- NOT the same
+    concept as top_tier_org. Kept separate deliberately to avoid conflating the
+    two "org" meanings in this codebase.
+
+    The League is a special case: it crowns its champion via season/playoffs
+    (orgs/league_season.py) rather than this continuous TITLE_FIGHT_INTERVAL
+    mechanism, so this function is a no-op for it (returns False immediately).
 
     Returns True if a title fight was run during this call, False otherwise.
     Amateur (tier0) is silently skipped — no title format exists there.
@@ -293,7 +335,11 @@ def maybe_run_title_fight(
     if ruleset is None or ruleset.title_rounds is None:
         return False   # tier0 or unknown tier — no titles
 
-    key = (weight_class, tier_key)
+    if tier_key == "tier4" and top_tier_org == THE_LEAGUE_NAME:
+        return False   # The League's title comes from playoffs, not this path
+
+    reg_org = top_tier_org if tier_key == "tier4" else ""
+    key = (weight_class, tier_key, reg_org)
     _fight_counters[key] = _fight_counters.get(key, 0) + 1
     if _fight_counters[key] < TITLE_FIGHT_INTERVAL:
         return False
@@ -301,57 +347,64 @@ def maybe_run_title_fight(
     # Title fight is due.
     _fight_counters[key] = 0
     pool = pools[weight_class][tier_key]
+    if reg_org:
+        pool = [f for f in pool if f.org == reg_org]
 
     if len(pool) < _MIN_POOL_SIZE:
         return False
 
-    champion_id = get_champion_id(weight_class, tier_key)
+    champion_id = get_champion_id(weight_class, tier_key, reg_org)
     was_vacant  = False
     override    = None
     challenger_rank: int | None = None
     prior_champion: Fighter | None = None   # set below only when an incumbent champ actually fought
 
     if champion_id is None:
-        result = _pick_vacant_pair(pool, weight_class)
+        result = _pick_vacant_pair(pool, weight_class, reg_org)
         if result is None:
             return False
         (fa, fb), override = result
         was_vacant = True
-        challenger_rank = _get_fighter_rank(fa, weight_class)
-        rank_b = _get_fighter_rank(fb, weight_class)
+        challenger_rank = _get_fighter_rank(fa, weight_class, reg_org)
+        rank_b = _get_fighter_rank(fb, weight_class, reg_org)
         override_tag = f" [{override}]" if override else ""
-        print(f"[TITLE] {weight_class} {tier_key} VACANT -- "
+        tag = f" ({reg_org})" if reg_org else ""
+        print(f"[TITLE] {weight_class} {tier_key}{tag} VACANT -- "
               f"{fa.name} (rank={challenger_rank or 'NR'}) "
               f"vs {fb.name} (rank={rank_b or 'NR'}){override_tag}")
     else:
         champ = _find_champion(pool, champion_id)
         if champ is None:
             # Champion demoted — treat as vacant.
-            result = _pick_vacant_pair(pool, weight_class)
+            result = _pick_vacant_pair(pool, weight_class, reg_org)
             if result is None:
                 return False
             (fa, fb), override = result
             was_vacant = True
-            challenger_rank = _get_fighter_rank(fa, weight_class)
-            rank_b = _get_fighter_rank(fb, weight_class)
+            challenger_rank = _get_fighter_rank(fa, weight_class, reg_org)
+            rank_b = _get_fighter_rank(fb, weight_class, reg_org)
             override_tag = f" [{override}]" if override else ""
-            print(f"[TITLE] {weight_class} {tier_key} VACANT (champ gone) -- "
+            tag = f" ({reg_org})" if reg_org else ""
+            print(f"[TITLE] {weight_class} {tier_key}{tag} VACANT (champ gone) -- "
                   f"{fa.name} (rank={challenger_rank or 'NR'}) "
                   f"vs {fb.name} (rank={rank_b or 'NR'}){override_tag}")
         else:
-            challenger, override = _pick_challenger(pool, champion_id, tier_key, weight_class)
+            challenger, override = _pick_challenger(pool, champion_id, tier_key, weight_class, reg_org)
             if challenger is None:
                 return False
             fa, fb = champ, challenger
             prior_champion = champ
-            challenger_rank = _get_fighter_rank(challenger, weight_class)
-            champ_rank = _get_fighter_rank(champ, weight_class)
+            challenger_rank = _get_fighter_rank(challenger, weight_class, reg_org)
+            champ_rank = _get_fighter_rank(champ, weight_class, reg_org)
             override_tag = f" [{override}]" if override else ""
-            print(f"[TITLE] {weight_class} {tier_key} DEFENSE -- "
+            tag = f" ({reg_org})" if reg_org else ""
+            print(f"[TITLE] {weight_class} {tier_key}{tag} DEFENSE -- "
                   f"[C] {champ.name} (rank={champ_rank or 'NR'}) "
                   f"vs {challenger.name} (rank={challenger_rank or 'NR'}){override_tag}")
 
-    winner, loser = simulate_fight(fa, fb, org=org, is_title=True, sim_day=get_sim_day())
+    decision_mode = decision_mode_for_org(reg_org) if reg_org else "total_score"
+    winner, loser = simulate_fight(fa, fb, org=org, is_title=True, sim_day=get_sim_day(),
+                                    decision_mode=decision_mode)
 
     # Base per-fight hype update (finish/decision/adversity/style) -- title
     # fights are still fights. Title-specific bonus below is additive on top.

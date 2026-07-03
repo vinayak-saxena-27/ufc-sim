@@ -7,6 +7,9 @@ from career.fighter import Fighter
 from career.tiers import TIER_LEVELS
 from career.academies import ACADEMY_PIPELINE
 from career.rankings import is_eligible_vs_ranked, get_ranked_ids, get_rankings, RANKINGS_SIZE
+from career.org_rankings import get_org_ranked_ids, get_org_rankings
+from orgs.org_registry import assign_org
+from sim_calendar import get_sim_day
 
 # ─── Tuning constants ─────────────────────────────────────────────────────────
 # Adjust once you see promotion/demotion rates in sim output.
@@ -169,14 +172,25 @@ def _pick_elite_opponent(
     gate for ineligible fighters, so those arrive with only unranked candidates.
     This function never bypasses that gate — it only further structures whatever
     candidate set the gate left behind.
+
+    Org Identity session: `candidates` also arrives already org-filtered (see
+    pick_opponent's hard-partition block) when fighter.org is set, so "ranked"
+    here means ranked WITHIN the fighter's own org (career/org_rankings.py),
+    not the old combined tier4 list. Falls back to the combined
+    rankings.py lists for the (should-not-happen post-session) case of a
+    tier4 fighter with no org assigned.
     """
     wc = fighter.weight_class
-    ranked_ids          = get_ranked_ids()
+    if fighter.org:
+        ranked_ids    = get_org_ranked_ids(fighter.org)
+        rankings_list = get_org_rankings(wc, fighter.org)
+    else:
+        ranked_ids    = get_ranked_ids()
+        rankings_list = get_rankings(wc)
     ranked_candidates   = [f for f in candidates if f.fighter_id in ranked_ids]
     unranked_candidates = [f for f in candidates if f.fighter_id not in ranked_ids]
     fighter_is_ranked   = fighter.fighter_id in ranked_ids
 
-    rankings_list = get_rankings(wc)
     rank_map      = {e.fighter.fighter_id: e.rank for e in rankings_list}
     fighter_rank  = rank_map.get(fighter.fighter_id)
 
@@ -233,35 +247,49 @@ def pick_scheduled_elite_a(
       - Self-limiting: if all ranked fighters leave a WC's tier4 pool, that WC is
         skipped; when all WCs are empty the scheduled slot is silently skipped.
 
-    Weight class is chosen uniformly from WCs that have >= 1 ranked tier4 fighter
-    and >= 1 OTHER tier4 fighter (so opponent selection doesn't immediately fail).
+    Weight class is chosen uniformly from (WC, org) pairs that have >= 2 ranked
+    tier4 fighters IN THE SAME ORG (Org Identity session: hard-partition means
+    "ranked" must mean ranked within one org, not the old combined tier4 list).
 
-    Falls back to any Elite fighter in the bootstrap period before rankings populate.
+    The League is excluded entirely -- its fighters get fights exclusively
+    through orgs/league_season.py's own dedicated scheduler, never through this
+    density-fight injection.
+
+    Falls back to any same-org Elite pair in the bootstrap period before
+    rankings populate.
     """
-    ranked_ids = get_ranked_ids()
+    from orgs.org_registry import ORG_NAMES, THE_LEAGUE_NAME
+    schedulable_orgs = [o for o in ORG_NAMES if o != THE_LEAGUE_NAME]
 
-    # Normal path: pick A from ranked tier4 fighters.
-    # Require >= 2 ranked fighters in the WC's tier4 pool so ranked_candidates is
-    # non-empty when _pick_elite_opponent runs — guarantees pool_type "RR" path fires.
-    eligible = [
-        wc for wc, wc_pools in pools.items()
-        if sum(1 for f in wc_pools.get("tier4", [])
-               if f.fighter_id in ranked_ids) >= 2
-    ]
+    # Normal path: pick (wc, org) with >= 2 ranked fighters in that org's tier4 pool.
+    eligible: list[tuple[str, str]] = []
+    for wc, wc_pools in pools.items():
+        tier4 = wc_pools.get("tier4", [])
+        for org in schedulable_orgs:
+            ranked_ids = get_org_ranked_ids(org)
+            n_ranked_in_org = sum(1 for f in tier4 if f.org == org and f.fighter_id in ranked_ids)
+            if n_ranked_in_org >= 2:
+                eligible.append((wc, org))
+
     if eligible:
-        wc = random.choice(eligible)
-        ranked_in_wc = [f for f in pools[wc]["tier4"] if f.fighter_id in ranked_ids]
-        return random.choice(ranked_in_wc)
+        wc, org = random.choice(eligible)
+        ranked_ids = get_org_ranked_ids(org)
+        ranked_in_org = [f for f in pools[wc]["tier4"] if f.org == org and f.fighter_id in ranked_ids]
+        return random.choice(ranked_in_org)
 
-    # Bootstrap fallback (before first rankings update): any WC with >= 2 Elite fighters.
-    fallback = [
-        wc for wc, wc_pools in pools.items()
-        if len(wc_pools.get("tier4", [])) >= 2
-    ]
+    # Bootstrap fallback (before first rankings update): any (wc, org) with
+    # >= 2 Elite fighters in the same org.
+    fallback: list[tuple[str, str]] = []
+    for wc, wc_pools in pools.items():
+        tier4 = wc_pools.get("tier4", [])
+        for org in schedulable_orgs:
+            if sum(1 for f in tier4 if f.org == org) >= 2:
+                fallback.append((wc, org))
     if not fallback:
         return None
-    wc = random.choice(fallback)
-    return random.choice(pools[wc]["tier4"])
+    wc, org = random.choice(fallback)
+    same_org = [f for f in pools[wc]["tier4"] if f.org == org]
+    return random.choice(same_org)
 
 
 def pick_opponent(
@@ -294,14 +322,32 @@ def pick_opponent(
             if candidates:
                 break
 
+    # ── Org hard-partition (Org Identity session) ────────────────────────────
+    # Top-tier orgs are separate promotions, not a shared pool: a tier4 fighter's
+    # opponents are drawn ONLY from their own org. Applied before the gate/
+    # sub-pool logic below so both operate on an already org-scoped set.
+    if fighter.tier == "tier4" and opp_tier == "tier4" and fighter.org:
+        org_candidates = [f for f in candidates if f.org == fighter.org]
+        if org_candidates:
+            candidates = org_candidates
+        # else: extremely thin org pool for this weight class (no same-org
+        # opponent available) -- fall back to the unfiltered same-tier
+        # candidate set rather than raising IndexError. Documented first-pass
+        # gap; expected to be rare (tier4's ~15/weight-class population split
+        # 3 ways is thin but matchmaking.ELITE_FIGHT_INTERVAL/replenishment/
+        # promotions keep replenishing each org's pool).
+
     # ── Elite ranked-opponent gate (unchanged) ───────────────────────────────────
     # An ineligible Elite fighter (hasn't passed any of the four conditions in
     # rankings.is_eligible_vs_ranked) is restricted to unranked candidates.
     # Filtering happens here BEFORE _pick_elite_opponent, so the sub-pool logic
     # below never bypasses this gate — it only further structures the filtered set.
+    # "Ranked" here is ORG-scoped when the candidate pool is org-scoped (the
+    # normal case above) -- falls back to the combined tier4 list only for the
+    # should-not-happen case of a tier4 fighter with no org.
     if fighter.tier == "tier4" and opp_tier == "tier4" and not is_eligible_vs_ranked(fighter):
         global _gate_enforced, _gate_fallback
-        ranked_ids_gate = get_ranked_ids()
+        ranked_ids_gate = get_org_ranked_ids(fighter.org) if fighter.org else get_ranked_ids()
         unranked_candidates_gate = [f for f in candidates if f.fighter_id not in ranked_ids_gate]
         if unranked_candidates_gate:
             candidates = unranked_candidates_gate
@@ -368,6 +414,13 @@ def apply_tier_transitions(
     Promotion/demotion is always within the same weight class — fighters never cross
     divisions via tier transitions. Only the pool membership changes; sub-attributes
     and overall are never modified.
+
+    Org Identity session: a promotion INTO tier4 assigns an org (same
+    template-weighted logic as tier4-generated fighters, see
+    orgs/org_registry.py::assign_org) and stamps org_start_day. A demotion OUT
+    of tier4 clears org (so a later re-promotion draws a fresh org rather than
+    silently reusing a stale one) -- org movement mechanics (Part 6) only
+    apply to fighters CURRENTLY at tier4.
     """
     wc  = fighter.weight_class
     idx = TIER_LEVELS.index(fighter.tier)
@@ -376,12 +429,20 @@ def apply_tier_transitions(
         pools[wc][fighter.tier].remove(fighter)
         fighter.tier = TIER_LEVELS[idx + 1]
         pools[wc][fighter.tier].append(fighter)
+        if fighter.tier == "tier4":
+            assign_org(fighter)
+            fighter.org_start_day = get_sim_day()
         return fighter.tier
 
     if idx > 0 and check_demotion(fighter):
+        was_tier4 = fighter.tier == "tier4"
         pools[wc][fighter.tier].remove(fighter)
         fighter.tier = TIER_LEVELS[idx - 1]
         pools[wc][fighter.tier].append(fighter)
+        if was_tier4:
+            fighter.org = ""
+            fighter.org_start_day = -1
+            fighter.org_arrived_pre_ranked = False
         return fighter.tier
 
     return None

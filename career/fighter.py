@@ -50,6 +50,24 @@ class Fighter:
     tier: str = "unknown"           # current competition tier; changes on promotion/demotion
     weight_class: str = "unknown"  # "lightweight" | "welterweight" | "heavyweight"
     academy: str = ""              # assigned training camp; set at generation, stable thereafter
+
+    # Top-tier organization affiliation (Org Identity session). Only meaningful at
+    # tier4 -- "" for every other tier. One of "Apex FC" / "The League" /
+    # "Eastern Grand Prix" once assigned. Set at generation time for fighters
+    # generated directly into tier4, and at promotion time for fighters who rise
+    # into tier4 -- see orgs/org_registry.py::assign_org().
+    org: str = ""
+    # Sim day the fighter joined their CURRENT org (generation day, or the day of
+    # a promotion/move/poach). Drives the org-movement tenure gate
+    # (MIN_TENURE_BEFORE_POACH in orgs/org_movement.py).
+    org_start_day: int = -1
+    # True if this fighter arrived at their current org already ranked (top-15)
+    # at a comparable top-tier promotion (Eastern GP or The League) at the moment
+    # of the move -- Part 7's matchmaking-gate exception. Set once by
+    # orgs/org_movement.py on an Apex FC signing; never cleared afterward (it
+    # remains a true historical fact even once the fighter naturally qualifies
+    # via the other gate conditions).
+    org_arrived_pre_ranked: bool = False
     # prospect_tier: assigned at generation; influences development RATE, not ceiling.
     # Fighters generated before the development session default to "developing" (retrofitted,
     # not properly assigned — their base attributes already reflect career-stage skill).

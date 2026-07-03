@@ -54,6 +54,7 @@ def simulate_fight(
     *,
     is_title: bool = False,
     sim_day: int = -1,
+    decision_mode: str = "total_score",
 ) -> tuple[Fighter, Fighter]:
     """
     Simulate one fight using the phase-based engine (4a/4b/4c).
@@ -61,6 +62,11 @@ def simulate_fight(
     Records FightResult in both fighters' fight_history and returns (winner, loser).
     Method ("KO/TKO", "submission", "decision") comes from the actual fight resolution
     rather than probability weights.
+
+    decision_mode: passed through to engine.fight_engine.simulate_full_fight
+    unchanged (see that module's docstring, Org Identity session Part 4).
+    Default "total_score" is the pre-existing behavior -- callers outside the
+    three top-tier orgs never need to pass this.
 
     win_probability() is preserved above for smoke_test.py calibration runs; it is
     no longer called from here.
@@ -83,7 +89,7 @@ def simulate_fight(
     fa_eff = apply_age_to_fighter(apply_cut_to_fighter(apply_development_to_fighter(fighter_a)))
     fb_eff = apply_age_to_fighter(apply_cut_to_fighter(apply_development_to_fighter(fighter_b)))
 
-    outcome = simulate_full_fight(fa_eff, fb_eff, is_title=is_title)
+    outcome = simulate_full_fight(fa_eff, fb_eff, is_title=is_title, decision_mode=decision_mode)
     winner  = fighter_a if outcome.winner_id == fighter_a.fighter_id else fighter_b
     loser   = fighter_b if winner is fighter_a else fighter_a
 

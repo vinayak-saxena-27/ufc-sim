@@ -56,6 +56,19 @@ from career.nonelite_rankings import (
     maybe_apply_scout_notice, reset_scout_notice_log, get_scout_notice_log,
     MIDMAJOR_LIST_SIZE, TOPORG_LIST_SIZE,
 )
+from career.org_rankings import (
+    update_org_rankings, reset_org_rankings, get_org_rankings,
+)
+from orgs.org_registry import (
+    ORG_NAMES, APEX_FC_NAME, THE_LEAGUE_NAME, EASTERN_GP_NAME, decision_mode_for_org,
+)
+from orgs.league_season import (
+    run_league_season, reset_league_season, reset_league_history, get_league_history,
+    LEAGUE_SEASON_LENGTH, LEAGUE_PLAYOFF_SIZE, FINISH_WIN_POINTS, DECISION_WIN_POINTS,
+)
+from orgs.org_movement import (
+    run_org_movement_sweep, reset_org_movement_log, get_org_movement_log,
+)
 from sim_calendar import reset_sim_clock, advance_sim_clock, get_sim_day, SIM_DAYS_PER_FIGHT
 from career.replenishment import (
     initialize_replenishment, run_replenishment,
@@ -102,6 +115,7 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
     reset_cut_registry()
     reset_rankings()
     reset_nonelite_rankings()
+    reset_org_rankings()
     reset_scout_notice_log()
     reset_gate_stats()
     reset_sim_clock()
@@ -112,6 +126,9 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
     reset_retirement_scanning()
     reset_elite_pairings()
     reset_weight_transfer_log()
+    reset_league_season()
+    reset_league_history()
+    reset_org_movement_log()
     all_fighters = [
         f
         for wc_pools in pools.values()
@@ -143,20 +160,28 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
         if not all_fighters:
             break
         a = random.choice(all_fighters)
+        if a.tier == "tier4" and a.org == THE_LEAGUE_NAME:
+            # The League's fighters get their fights exclusively through
+            # orgs/league_season.py's dedicated scheduler (called below,
+            # once per iteration) -- never through normal random matchmaking.
+            continue
         try:
             b = pick_opponent(a, pools)
         except IndexError:
             # Division pool exhausted — skip this iteration rather than crash.
             continue
 
-        # Capture tier+wc before transitions — title scheduling uses the pool
-        # where the fight took place, not where A ends up afterward.
+        # Capture tier+wc(+org) before transitions — title scheduling uses the
+        # pool where the fight took place, not where A ends up afterward.
         fight_wc   = a.weight_class
         fight_tier = a.tier
+        fight_org  = a.org if fight_tier == "tier4" else ""
         current_day = get_sim_day()
 
         p_a_wins = _true_prob(a.overall, b.overall)
-        winner, loser = simulate_fight(a, b, org="league", sim_day=current_day)
+        decision_mode = decision_mode_for_org(fight_org) if fight_org else "total_score"
+        winner, loser = simulate_fight(a, b, org="league", sim_day=current_day,
+                                        decision_mode=decision_mode)
         result = winner.fight_history[-1]
 
         # Win-triggered development boost — fires on the BASE fighter object (not the
@@ -192,8 +217,20 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
         for rf in fighters_to_remove:
             all_fighters[:] = [f for f in all_fighters if f is not rf]
 
-        # Check whether a title fight is due in this pool.
-        maybe_run_title_fight(fight_wc, fight_tier, pools, org="league", fight_num=i + 1, all_fighters=all_fighters)
+        # Check whether a title fight is due in this pool (top_tier_org is only
+        # meaningful at tier4 -- Apex FC / Eastern GP each get their own belt;
+        # The League is a no-op here, see title.maybe_run_title_fight's guard).
+        maybe_run_title_fight(fight_wc, fight_tier, pools, org="league", fight_num=i + 1,
+                              all_fighters=all_fighters, top_tier_org=fight_org)
+
+        # The League's own dedicated season/playoff scheduler (Org Identity
+        # session, Part 3) -- gated internally on LEAGUE_FIGHT_INTERVAL, a
+        # no-op most iterations.
+        run_league_season(pools, fight_num=i + 1, sim_day=current_day, all_fighters=all_fighters)
+
+        # Cross-org free agency sweep (Org Identity session, Part 6) -- gated
+        # internally per-fighter on LABEL_UPDATE_INTERVAL, same cadence as labels/cuts.
+        run_org_movement_sweep(all_fighters, fight_num=i + 1)
 
         # Advance the global clock after all activity for this iteration is stamped.
         advance_sim_clock()
@@ -228,6 +265,7 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
         if (i + 1) % RANKINGS_UPDATE_INTERVAL == 0:
             update_rankings(pools)
             update_nonelite_rankings(pools)
+            update_org_rankings(pools)
             maybe_apply_scout_notice(pools, fight_num=i + 1)
 
         # ── Scheduled Elite fight (option b density fix) ─────────────────────
@@ -245,7 +283,10 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
                     pass
                 else:
                     _ewc, _etier, _eday = _ae.weight_class, _ae.tier, get_sim_day()
-                    _ew, _el = simulate_fight(_ae, _be, org="league", sim_day=_eday)
+                    _eorg = _ae.org if _etier == "tier4" else ""
+                    _edecision_mode = decision_mode_for_org(_eorg) if _eorg else "total_score"
+                    _ew, _el = simulate_fight(_ae, _be, org="league", sim_day=_eday,
+                                               decision_mode=_edecision_mode)
                     apply_win_development_boost(_ew)
                     apply_phase_development_feedback(_ew)
                     apply_phase_development_feedback(_el)
@@ -263,7 +304,8 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
                     for _erf in _erm:
                         all_fighters[:] = [f for f in all_fighters if f is not _erf]
                     maybe_run_title_fight(_ewc, _etier, pools, org="league",
-                                         fight_num=i + 1, all_fighters=all_fighters)
+                                         fight_num=i + 1, all_fighters=all_fighters,
+                                         top_tier_org=_eorg)
                     advance_sim_clock()
                     advance_all_ages(all_fighters)
                     advance_all_development(all_fighters)
@@ -330,6 +372,7 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
         update_labels(f)
     update_rankings(pools)   # final authoritative snapshot used by all output below
     update_nonelite_rankings(pools)   # same, for the Mid-major/Top-org tables below
+    update_org_rankings(pools)   # same, for the per-org Elite tables below
 
     # ── Calendar summary ──────────────────────────────────────────────────────
     final_day = get_sim_day()
@@ -510,7 +553,7 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
     _fighter_index = {f.fighter_id: f for f in all_fighters}
     any_champ = False
     for wc in WEIGHT_CLASSES:
-        for tier_key in TIER_LEVELS[1:]:   # skip tier0 (no titles)
+        for tier_key in TIER_LEVELS[1:4]:   # tier1-tier3 (no titles at tier0; tier4 is org-split below)
             champ_id = get_champion_id(wc, tier_key)
             if champ_id:
                 champ = _fighter_index.get(champ_id)
@@ -522,8 +565,52 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
                     f"  [dim]{rec}[/dim]"
                 )
                 any_champ = True
+        # tier4: one belt per top-tier org.
+        for org in ORG_NAMES:
+            champ_id = get_champion_id(wc, "tier4", org)
+            if champ_id:
+                champ = _fighter_index.get(champ_id)
+                name  = champ.name if champ else f"<id {champ_id[:8]}>"
+                rec   = champ.record_str if champ else "?"
+                console.print(
+                    f"  {_WC_SHORT[wc]} {org:<12}"
+                    f"  [bold yellow]{name}[/bold yellow]"
+                    f"  [dim]{rec}[/dim]"
+                )
+                any_champ = True
     if not any_champ:
         console.print("[dim]  No champions crowned yet.[/dim]")
+    console.print()
+
+    # ── Org Distribution (Org Identity session, deliverable a) ───────────────
+    # Shows the tier4 population split across the three top-tier orgs, broken
+    # down by originating template, so the per-template org-assignment
+    # weighting (orgs/org_registry.py::TEMPLATE_ORG_WEIGHTS) is visible.
+    console.print()
+    console.print(Rule("[bold]Top-Tier Org Distribution (tier4)[/bold]"))
+    console.print()
+
+    all_elite = [f for f in all_fighters if f.tier == "tier4"]
+    ot = Table(box=box.SIMPLE_HEAD, show_lines=False, padding=(0, 1))
+    ot.add_column("Template", style="white", min_width=16)
+    for org in ORG_NAMES:
+        ot.add_column(org, justify="right", style="bold blue", width=14)
+    ot.add_column("Total", justify="right", style="dim", width=7)
+
+    templates_seen = sorted({f.template for f in all_elite})
+    org_totals = {org: 0 for org in ORG_NAMES}
+    for tmpl in templates_seen:
+        tmpl_fighters = [f for f in all_elite if f.template == tmpl]
+        row = [_TEMPLATE_SHORT.get(tmpl, tmpl)]
+        for org in ORG_NAMES:
+            n = sum(1 for f in tmpl_fighters if f.org == org)
+            org_totals[org] += n
+            row.append(str(n))
+        row.append(str(len(tmpl_fighters)))
+        ot.add_row(*row)
+    grand_total = sum(org_totals.values())
+    ot.add_row("[bold]All[/bold]", *[f"[bold]{org_totals[o]}[/bold]" for o in ORG_NAMES], f"[bold]{grand_total}[/bold]")
+    console.print(ot)
     console.print()
 
     # ── Standings — one table per weight class ───────────────────────────────
@@ -565,6 +652,7 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
         table.add_column("#",       justify="right",  style="dim",     width=3)
         table.add_column("Fighter", no_wrap=True,     style="white",   min_width=20)
         table.add_column("Tier",    style="dim",                       width=10)
+        table.add_column("Org",     style="bold blue",                 width=12)
         table.add_column("Style",   style="dim",                       width=10)
         table.add_column("Rec",     justify="center", style="bold",    width=6)
         table.add_column("Ovr",     justify="right",  style="cyan",    width=6)
@@ -583,6 +671,7 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
                 str(rank),
                 f.name,
                 _TIER_SHORT.get(f.tier, f.tier),
+                f.org if f.org else "-",
                 _TEMPLATE_SHORT.get(f.template, f.template),
                 f"[{rec_style}]{f.record_str}[/{rec_style}]",
                 f"{f.overall:+.1f}",
@@ -722,22 +811,25 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
     # between the label classifier and the ranking formula.
     gate_enforced, gate_fallback = get_gate_stats()
     console.print()
-    console.print(Rule("[bold]Elite Rankings (tier4) — Component Breakdown[/bold]"))
+    console.print(Rule("[bold]Elite Rankings (tier4) — Per-Org Breakdown[/bold]"))
     console.print(
         f"[dim]  Updated every {RANKINGS_UPDATE_INTERVAL} fights  |  "
-        f"Top {RANKINGS_SIZE} per division  |  "
-        f"Score = {_W_WIN_RATE}*WR + {_W_QUALITY}*Q + {_W_HYPE}*H[/dim]"
+        f"Top {RANKINGS_SIZE} per (division, org)  |  "
+        f"Score = {_W_WIN_RATE}*WR + {_W_QUALITY}*Q + {_W_HYPE}*H (rankings.py formula, reused as-is)[/dim]"
     )
     console.print(
         f"[dim]  Gate stats: {gate_enforced} times enforced (unranked-only pool applied)  |  "
         f"{gate_fallback} fallbacks (pool too small to filter)[/dim]"
+    )
+    console.print(
+        "[dim]  Org Identity session: three separate ranked lists per weight class "
+        "(one per top-tier org) replace the old single combined list.[/dim]"
     )
     console.print()
 
     DISPLAY_TOP_N = 10
 
     for wc in WEIGHT_CLASSES:
-        rankings = get_rankings(wc)
         elite_fighters_wc = pools[wc].get("tier4", [])
         n_elite = len(elite_fighters_wc)
 
@@ -746,60 +838,125 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
             f"[dim]{n_elite} active in Elite pool[/dim]"
         )
 
-        if not rankings:
-            console.print("[dim]  No rankings yet (not enough fights or pool empty).[/dim]")
-            console.print()
-            continue
+        for org in ORG_NAMES:
+            org_fighters_wc = [f for f in elite_fighters_wc if f.org == org]
+            rankings = get_org_rankings(wc, org)
+            champ_id = get_champion_id(wc, "tier4", org)
+            champ = next((f for f in org_fighters_wc if f.fighter_id == champ_id), None) if champ_id else None
 
-        rt = Table(box=box.SIMPLE_HEAD, show_lines=False, padding=(0, 1))
-        rt.add_column("#",     justify="right",  style="dim",         width=3)
-        rt.add_column("Fighter",                 style="white",       min_width=16, max_width=18)
-        rt.add_column("Rec",   justify="center", style="bold",        width=5)
-        rt.add_column("n",     justify="right",  style="dim",         width=3)
-        rt.add_column("rw",    justify="right",  style="cyan",        width=3)
-        rt.add_column("Score", justify="right",  style="bold yellow", width=5)
-        rt.add_column("WR*W",  justify="right",  style="cyan",        width=5)
-        rt.add_column("Q*W",   justify="right",  style="green",       width=5)
-        rt.add_column("H*W",   justify="right",  style="dim",         width=5)
-        rt.add_column("Label", style="yellow",                        width=6)
+            header = f"  [bold]{org}[/bold]  [dim]({len(org_fighters_wc)} fighters)[/dim]"
+            if champ:
+                header += f"  [dim]Champion:[/dim] [bold yellow]{champ.name}[/bold yellow]"
+            console.print(header)
 
-        for e in rankings[:DISPLAY_TOP_N]:
-            f = e.fighter
-            t4_w, t4_l = f.record_by_tier("tier4")
-            rec = f"{t4_w}-{t4_l}"
-            label_s = _label_str(f)
-            rt.add_row(
-                str(e.rank),
-                f.name,
-                rec,
-                str(e.n_elite_fights),
-                str(e.n_ranked_wins),
-                f"{e.score:.3f}",
-                f"{_W_WIN_RATE * e.win_rate_component:.3f}",
-                f"{_W_QUALITY  * e.quality_component:.3f}",
-                f"{_W_HYPE     * e.hype_component:.3f}",
-                label_s,
-            )
-        console.print(rt)
-
-        # ── Contender alignment check ─────────────────────────────────────────
-        # Flag any labeled Contender not in the top-15 or ranked very low (>12).
-        # Drift is expected occasionally (two independent systems), but should be visible.
-        for f in elite_fighters_wc:
-            if CONTENDER not in f.labels:
+            if not rankings:
+                console.print("[dim]    No rankings yet (not enough fights or pool empty).[/dim]")
                 continue
-            entry = next((e for e in rankings if e.fighter is f), None)
-            if entry is None:
-                console.print(
-                    f"[yellow]  DRIFT: {f.name} is Contender but NOT in top-15.[/yellow]"
+
+            rt = Table(box=box.SIMPLE_HEAD, show_lines=False, padding=(0, 1))
+            rt.add_column("#",     justify="right",  style="dim",         width=3)
+            rt.add_column("Fighter",                 style="white",       min_width=16, max_width=18)
+            rt.add_column("Rec",   justify="center", style="bold",        width=5)
+            rt.add_column("n",     justify="right",  style="dim",         width=3)
+            rt.add_column("rw",    justify="right",  style="cyan",        width=3)
+            rt.add_column("Score", justify="right",  style="bold yellow", width=5)
+            rt.add_column("Label", style="yellow",                        width=6)
+
+            for e in rankings[:DISPLAY_TOP_N]:
+                f = e.fighter
+                t4_w, t4_l = f.record_by_tier("tier4")
+                rt.add_row(
+                    str(e.rank), f.name, f"{t4_w}-{t4_l}",
+                    str(e.n_elite_fights), str(e.n_ranked_wins),
+                    f"{e.score:.3f}", _label_str(f),
                 )
-            elif entry.rank > 12:
-                console.print(
-                    f"[yellow]  DRIFT: {f.name} is Contender but ranks #{entry.rank} "
-                    f"(score={entry.score:.3f}).[/yellow]"
-                )
+            console.print(rt)
+
+            # ── Contender alignment check (org-scoped) ─────────────────────
+            for f in org_fighters_wc:
+                if CONTENDER not in f.labels:
+                    continue
+                entry = next((e for e in rankings if e.fighter is f), None)
+                if entry is None:
+                    console.print(f"[yellow]    DRIFT: {f.name} is Contender but NOT in {org}'s top-15.[/yellow]")
+                elif entry.rank > 12:
+                    console.print(
+                        f"[yellow]    DRIFT: {f.name} is Contender but ranks #{entry.rank} "
+                        f"in {org} (score={entry.score:.3f}).[/yellow]"
+                    )
 
         console.print()
+
+    # ── The League — Season Results (Org Identity session, deliverable c) ────
+    console.print()
+    console.print(Rule("[bold]The League — Season/Playoff Results[/bold]"))
+    console.print(
+        f"[dim]  Regular season: {LEAGUE_SEASON_LENGTH} fights/division  |  "
+        f"Playoffs: top {LEAGUE_PLAYOFF_SIZE} point-scorers  |  "
+        f"Finish win={FINISH_WIN_POINTS}pt, decision win={DECISION_WIN_POINTS}pt[/dim]"
+    )
+    console.print()
+
+    league_history = get_league_history()
+    if league_history:
+        lt = Table(box=box.SIMPLE_HEAD, show_lines=False, padding=(0, 1))
+        lt.add_column("Div",     style="dim",                   width=4)
+        lt.add_column("Season",  justify="right", style="dim",  width=6)
+        lt.add_column("Top Scorers", style="white",             min_width=28)
+        lt.add_column("Final",   style="cyan",                  min_width=22)
+        lt.add_column("Champion", style="bold yellow",          min_width=16)
+        for rec in league_history:
+            scorers_str = ", ".join(f"{n} ({p:.0f}pt)" for n, p in rec.top_scorers[:4]) or "-"
+            final_str = (
+                f"{rec.final_result[0]} def. {rec.final_result[1]} ({rec.final_result[2]})"
+                if rec.final_result else "no final (thin pool)"
+            )
+            lt.add_row(
+                _WC_SHORT.get(rec.weight_class, rec.weight_class),
+                str(rec.season_number), scorers_str, final_str,
+                rec.champion_name or "-",
+            )
+        console.print(lt)
+    else:
+        console.print("[dim]  No League seasons completed yet (increase --fights or lower LEAGUE_SEASON_LENGTH).[/dim]")
+    console.print()
+
+    # ── Cross-Org Movement (Org Identity session, Part 6) ────────────────────
+    console.print()
+    console.print(Rule("[bold]Cross-Org Movement[/bold]"))
+    console.print()
+
+    org_move_log = get_org_movement_log()
+    n_poached  = sum(1 for r in org_move_log if r.reason == "apex_poach" and not r.was_refusal)
+    n_refused  = sum(1 for r in org_move_log if r.was_refusal)
+    n_departed = sum(1 for r in org_move_log if r.reason.startswith("apex_departure"))
+    n_lateral  = sum(1 for r in org_move_log if r.reason == "within_tier_opportunity")
+    console.print(
+        f"[dim]  {n_poached} signed with Apex FC  |  {n_refused} declined Apex FC's approach  |  "
+        f"{n_departed} left Apex FC  |  {n_lateral} League<->Eastern GP moves[/dim]"
+    )
+    console.print()
+
+    if org_move_log:
+        mvt = Table(box=box.SIMPLE_HEAD, show_lines=False, padding=(0, 1))
+        mvt.add_column("Sim#",    justify="right", style="dim",   width=6)
+        mvt.add_column("Fighter", no_wrap=True,    style="white", width=20)
+        mvt.add_column("Div",                      style="dim",   width=4)
+        mvt.add_column("From",                     style="dim",   width=14)
+        mvt.add_column("To",                       style="dim",   width=14)
+        mvt.add_column("Reason",                   style="bold cyan", width=24)
+        mvt.add_column("Note",                     style="dim",   min_width=18)
+        for rec in org_move_log:
+            reason_str = rec.reason + (" [REFUSED]" if rec.was_refusal else "")
+            mvt.add_row(
+                str(rec.fight_num), rec.fighter_name,
+                _WC_SHORT.get(rec.weight_class, rec.weight_class),
+                rec.from_org, rec.to_org, reason_str, rec.note,
+            )
+        console.print(mvt)
+    else:
+        console.print("[dim]  No cross-org movement during this simulation run.[/dim]")
+    console.print()
 
     # ── Top-org Rankings (top-15, same formula/weights as Elite) ─────────────
     console.print()

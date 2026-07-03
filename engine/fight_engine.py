@@ -173,6 +173,7 @@ def simulate_full_fight(
     *,
     is_title: bool = False,
     tier: str | None = None,
+    decision_mode: str = "total_score",
 ) -> FightOutcome:
     """
     Simulate a complete fight between two fighters.
@@ -181,9 +182,29 @@ def simulate_full_fight(
     None, falls back to fa.tier.  Unknown tier keys (e.g. test fixtures) fall
     back to ROUNDS_STANDARD / TICKS_PER_ROUND.
 
-    A finish anywhere in any round exits early.  If all rounds complete, the
-    decision goes to cumulative round scores.  Exact score ties are broken by
-    coin flip (floating-point ties are astronomically rare with this engine).
+    A finish anywhere in any round exits early -- decision_mode is irrelevant
+    whenever a finish occurs; it only affects how a fight that goes the
+    distance is decided.
+
+    decision_mode (Org Identity session, Part 4 -- Eastern GP whole-fight
+    scoring):
+      "total_score" (default, PRE-EXISTING behavior, unchanged) -- winner is
+        whichever fighter has the higher SUM of round scores across the whole
+        fight. This is what the org spec calls "whole-fight" scoring: a
+        fighter who loses rounds 1-2 clearly but dominates round 3 can still
+        win if round 3's swing outweighs the earlier deficit. Used by Eastern
+        Grand Prix, and by every non-org-tier4 fight in the sim (unchanged
+        default -- nothing outside the three top-tier orgs opts into anything
+        else).
+      "round_count" (NEW this session) -- winner is whichever fighter won more
+        INDIVIDUAL rounds (score_a > score_b that round counts as a round win,
+        MMA 10-9-style), regardless of margin. A blowout round 3 comeback does
+        NOT overturn two closely-lost rounds under this mode. Ties in rounds-
+        won fall back to the total-score sum, then a coin flip. Used by Apex
+        FC and The League.
+
+    Exact total-score ties (either mode's fallback) are broken by coin flip
+    (floating-point ties are astronomically rare with this engine).
 
     Raises ValueError if is_title=True for a tier whose title_rounds is None.
 
@@ -245,11 +266,25 @@ def simulate_full_fight(
         carry_sub_a = end_wsub_a * SUB_PRESSURE_ROUND_DECAY
         carry_sub_b = end_wsub_b * SUB_PRESSURE_ROUND_DECAY
 
-    # Decision: sum round scores across all rounds.
+    # Decision: no finish across all rounds.
     total_a = sum(r.score_a for r in results)
     total_b = sum(r.score_b for r in results)
 
-    if total_a > total_b:
+    if decision_mode == "round_count":
+        rounds_a = sum(1 for r in results if r.score_a > r.score_b)
+        rounds_b = sum(1 for r in results if r.score_b > r.score_a)
+        if rounds_a > rounds_b:
+            winner, loser = fa, fb
+        elif rounds_b > rounds_a:
+            winner, loser = fb, fa
+        elif total_a > total_b:
+            # Rounds-won tied (e.g. a draw round) -- fall back to total score.
+            winner, loser = fa, fb
+        elif total_b > total_a:
+            winner, loser = fb, fa
+        else:
+            winner, loser = (fa, fb) if random.random() < 0.5 else (fb, fa)
+    elif total_a > total_b:
         winner, loser = fa, fb
     elif total_b > total_a:
         winner, loser = fb, fa

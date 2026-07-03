@@ -28,6 +28,13 @@ Part 1: Matchmaking gate (is_eligible_vs_ranked)
     correct distinction: generated-at-Elite fighters (unknown credentials) must prove
     themselves; promoted fighters (demonstrated tier3 dominance) get fast-tracked.
 
+  Condition 5 (Org Identity session, Part 7): fighter.org_arrived_pre_ranked.
+    A GENUINELY NEW condition, not a pre-existing placeholder -- added this session.
+    Set once by orgs/org_movement.py when a fighter moves to Apex FC while ranked
+    (top-15) at Eastern GP or The League at the moment of the move ("arrived
+    pre-ranked from a comparable promotion"). Distinct from Condition 4 (tier3
+    dominance) -- this is a cross-org signal, not a cross-tier one.
+
 Part 2: Ranking formula (compute_division_rankings)
   Elite tier only, top RANKINGS_SIZE (15) per weight class.
 
@@ -327,6 +334,10 @@ def is_eligible_vs_ranked(fighter: Fighter) -> bool:
             wins_t3 = sum(1 for r in last_t3 if r.outcome == "win")
             if wins_t3 >= ELITE_GATE_TIER3_WIN_THRESHOLD:
                 return True
+
+    # Condition 5 (Org Identity session)
+    if fighter.org_arrived_pre_ranked:
+        return True
 
     return False
 
