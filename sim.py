@@ -50,6 +50,12 @@ from career.rankings import (
     RANKINGS_UPDATE_INTERVAL, RANKINGS_SIZE,
     _W_WIN_RATE, _W_QUALITY, _W_HYPE,
 )
+from career.nonelite_rankings import (
+    update_nonelite_rankings, reset_nonelite_rankings,
+    get_midmajor_rankings, get_toporg_rankings,
+    maybe_apply_scout_notice, reset_scout_notice_log, get_scout_notice_log,
+    MIDMAJOR_LIST_SIZE, TOPORG_LIST_SIZE,
+)
 from sim_calendar import reset_sim_clock, advance_sim_clock, get_sim_day, SIM_DAYS_PER_FIGHT
 from career.replenishment import (
     initialize_replenishment, run_replenishment,
@@ -95,6 +101,8 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
     reset_title_scheduling()
     reset_cut_registry()
     reset_rankings()
+    reset_nonelite_rankings()
+    reset_scout_notice_log()
     reset_gate_stats()
     reset_sim_clock()
     reset_age_advancement()
@@ -214,8 +222,13 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
             all_fighters[:] = [f for f in all_fighters if f is not rf]
 
         # Recompute Elite rankings every RANKINGS_UPDATE_INTERVAL sim fights.
+        # Non-Elite (Mid-major/Top-org) rankings share the same cadence -- not
+        # a separate trigger. Scout-notice fast-track promotion evaluates right
+        # after, since it needs freshly computed rank positions as an input.
         if (i + 1) % RANKINGS_UPDATE_INTERVAL == 0:
             update_rankings(pools)
+            update_nonelite_rankings(pools)
+            maybe_apply_scout_notice(pools, fight_num=i + 1)
 
         # ── Scheduled Elite fight (option b density fix) ─────────────────────
         # Injected additively every ELITE_FIGHT_INTERVAL main fights.  Non-Elite
@@ -316,6 +329,7 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
     for f in all_fighters:
         update_labels(f)
     update_rankings(pools)   # final authoritative snapshot used by all output below
+    update_nonelite_rankings(pools)   # same, for the Mid-major/Top-org tables below
 
     # ── Calendar summary ──────────────────────────────────────────────────────
     final_day = get_sim_day()
@@ -786,6 +800,117 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
                 )
 
         console.print()
+
+    # ── Top-org Rankings (top-15, same formula/weights as Elite) ─────────────
+    console.print()
+    console.print(Rule("[bold]Top-org Rankings (tier3) — Top 15[/bold]"))
+    console.print(
+        f"[dim]  Updated every {RANKINGS_UPDATE_INTERVAL} fights (same cadence as Elite)  |  "
+        f"Top {TOPORG_LIST_SIZE} per division  |  "
+        f"Score = {_W_WIN_RATE}*WR + {_W_QUALITY}*Q + {_W_HYPE}*H  (same weights as Elite)[/dim]"
+    )
+    console.print()
+
+    for wc in WEIGHT_CLASSES:
+        to_rankings = get_toporg_rankings(wc)
+        champ_id = get_champion_id(wc, "tier3")
+        champ = next((f for f in pools[wc].get("tier3", []) if f.fighter_id == champ_id), None) if champ_id else None
+
+        header = f"[bold]{wc.title()} ({_WC_SHORT[wc]})[/bold]"
+        if champ:
+            header += f"  [dim]Champion:[/dim] [bold yellow]{champ.name}[/bold yellow]"
+        console.print(header)
+
+        if not to_rankings:
+            console.print("[dim]  No rankings yet (not enough fights or pool empty).[/dim]")
+            console.print()
+            continue
+
+        tot = Table(box=box.SIMPLE_HEAD, show_lines=False, padding=(0, 1))
+        tot.add_column("#",     justify="right",  style="dim",         width=3)
+        tot.add_column("Fighter",                 style="white",       min_width=16, max_width=18)
+        tot.add_column("Rec",   justify="center", style="bold",        width=5)
+        tot.add_column("n",     justify="right",  style="dim",         width=3)
+        tot.add_column("rw",    justify="right",  style="cyan",        width=3)
+        tot.add_column("Score", justify="right",  style="bold yellow", width=5)
+
+        for e in to_rankings:
+            f = e.fighter
+            w3, l3 = f.record_by_tier("tier3")
+            tot.add_row(str(e.rank), f.name, f"{w3}-{l3}", str(e.n_elite_fights),
+                        str(e.n_ranked_wins), f"{e.score:.3f}")
+        console.print(tot)
+        console.print()
+
+    # ── Mid-major "Ones to Watch" (top-5, simplified formula) ────────────────
+    console.print()
+    console.print(Rule("[bold]Mid-major \"Ones to Watch\" (tier2) — Top 5[/bold]"))
+    console.print(
+        f"[dim]  Updated every {RANKINGS_UPDATE_INTERVAL} fights (same cadence as Elite)  |  "
+        f"Top {MIDMAJOR_LIST_SIZE} per division  |  simplified formula, no matchmaking gate[/dim]"
+    )
+    console.print()
+
+    for wc in WEIGHT_CLASSES:
+        mm_rankings = get_midmajor_rankings(wc)
+        champ_id = get_champion_id(wc, "tier2")
+        champ = next((f for f in pools[wc].get("tier2", []) if f.fighter_id == champ_id), None) if champ_id else None
+
+        header = f"[bold]{wc.title()} ({_WC_SHORT[wc]})[/bold]"
+        if champ:
+            header += f"  [dim]Champion:[/dim] [bold yellow]{champ.name}[/bold yellow]"
+        console.print(header)
+
+        if not mm_rankings:
+            console.print("[dim]  No ones-to-watch yet.[/dim]")
+            console.print()
+            continue
+
+        mmt = Table(box=box.SIMPLE_HEAD, show_lines=False, padding=(0, 1))
+        mmt.add_column("#",     justify="right", style="dim",         width=3)
+        mmt.add_column("Fighter",                style="white",       min_width=16, max_width=18)
+        mmt.add_column("Rec",   justify="center", style="bold",       width=5)
+        mmt.add_column("Score", justify="right",  style="bold yellow", width=5)
+
+        for e in mm_rankings:
+            f = e.fighter
+            w2, l2 = f.record_by_tier("tier2")
+            mmt.add_row(str(e.rank), f.name, f"{w2}-{l2}", f"{e.score:.3f}")
+        console.print(mmt)
+        console.print()
+
+    # ── Scout-Notice Fast-Track Promotions ────────────────────────────────────
+    scout_log = get_scout_notice_log()
+    console.print()
+    console.print(Rule(
+        f"[bold]Scout-Notice Fast-Track Promotions[/bold]  "
+        f"[dim]({len(scout_log)} fired — additive to the deterministic threshold path)[/dim]"
+    ))
+    console.print()
+    if scout_log:
+        snt = Table(box=box.SIMPLE_HEAD, show_lines=False, padding=(0, 1))
+        snt.add_column("Sim#",    justify="right", style="dim",       width=6)
+        snt.add_column("Fighter", no_wrap=True,    style="white",     width=20)
+        snt.add_column("Div",                      style="dim",       width=3)
+        snt.add_column("From",                     style="dim",       width=9)
+        snt.add_column("To",                       style="dim",       width=9)
+        snt.add_column("p",       justify="right", style="cyan",      width=6)
+        snt.add_column("Signal",                   style="bold magenta", width=10)
+        for rec in scout_log:
+            signal = "CHAMPION" if rec.was_champion else (f"rank #{rec.rank}" if rec.rank is not None else "-")
+            snt.add_row(
+                str(rec.fight_num),
+                rec.fighter_name,
+                _WC_SHORT.get(rec.weight_class, rec.weight_class),
+                _TIER_SHORT.get(rec.from_tier, rec.from_tier),
+                _TIER_SHORT.get(rec.to_tier, rec.to_tier),
+                f"{rec.p_scout_notice:.3f}",
+                signal,
+            )
+        console.print(snt)
+    else:
+        console.print("[dim]  No scout-notice promotions during this simulation run.[/dim]")
+    console.print()
 
     # -- Academy Replenishment Summary ----------------------------------------
     console.print()
