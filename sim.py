@@ -220,6 +220,9 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
         # ── Scheduled Elite fight (option b density fix) ─────────────────────
         # Injected additively every ELITE_FIGHT_INTERVAL main fights.  Non-Elite
         # fighters are unaffected; Elite pool replenishment rate is unchanged.
+        # These are fully normal fights — no special org tag, no exclusion from
+        # any downstream system (wins, losses, promotion, demotion, labels,
+        # rankings, hype, development all treat them like any other fight).
         if ELITE_FIGHT_INTERVAL > 0 and (i + 1) % ELITE_FIGHT_INTERVAL == 0:
             _ae = pick_scheduled_elite_a(pools)
             if _ae is not None:
@@ -229,7 +232,7 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
                     pass
                 else:
                     _ewc, _etier, _eday = _ae.weight_class, _ae.tier, get_sim_day()
-                    _ew, _el = simulate_fight(_ae, _be, org="exhibition", sim_day=_eday)
+                    _ew, _el = simulate_fight(_ae, _be, org="league", sim_day=_eday)
                     apply_win_development_boost(_ew)
                     apply_phase_development_feedback(_ew)
                     apply_phase_development_feedback(_el)
@@ -246,7 +249,7 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
                             _erm.append(_ef)
                     for _erf in _erm:
                         all_fighters[:] = [f for f in all_fighters if f is not _erf]
-                    maybe_run_title_fight(_ewc, _etier, pools, org="exhibition",
+                    maybe_run_title_fight(_ewc, _etier, pools, org="league",
                                          fight_num=i + 1, all_fighters=all_fighters)
                     advance_sim_clock()
                     advance_all_ages(all_fighters)

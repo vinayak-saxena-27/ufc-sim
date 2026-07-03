@@ -155,7 +155,15 @@ def _score_fighter(
     Returns (total_score, wr_component, quality_component, hype_component,
              n_elite_fights, n_ranked_wins).
     """
-    tier4_fights = [r for r in fighter.fight_history if r.tier == "tier4"]
+    # Only count tier4 fights from the fighter's CURRENT weight class -- a fighter
+    # who moved divisions shouldn't have their old-division history count toward
+    # their new-division ranking. weight_class == "" is pre-existing fight history
+    # recorded before this field existed; included rather than excluded so long-
+    # career fighters aren't unfairly penalized for fights that predate the field.
+    tier4_fights = [
+        r for r in fighter.fight_history
+        if r.tier == "tier4" and (r.weight_class == fighter.weight_class or r.weight_class == "")
+    ]
     n = len(tier4_fights)
 
     if n == 0:

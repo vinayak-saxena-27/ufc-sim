@@ -126,6 +126,7 @@ def simulate_fight(
         time_clinch      = time_clinch,
         time_ground      = time_ground,
         adversity_comeback = adversity_comeback,
+        weight_class     = winner.weight_class,
     ))
     loser.fight_history.append(FightResult(
         opponent_name    = winner.name,
@@ -140,5 +141,6 @@ def simulate_fight(
         time_standing    = time_standing,
         time_clinch      = time_clinch,
         time_ground      = time_ground,
+        weight_class     = loser.weight_class,
     ))
     return winner, loser

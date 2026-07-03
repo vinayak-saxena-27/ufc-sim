@@ -161,7 +161,7 @@ def run_sim() -> tuple[list, dict, dict, dict, int]:
                 except IndexError:
                     pass
                 else:
-                    _run_fight_cycle(ae, be, fight_num=total_fight_idx + 1, org="exhibition")
+                    _run_fight_cycle(ae, be, fight_num=total_fight_idx + 1)
                     total_fight_idx += 1
                     if total_fight_idx % RANKINGS_UPDATE_INTERVAL == 0:
                         update_rankings(pools)

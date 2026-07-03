@@ -35,6 +35,10 @@ class FightResult:
     # only -- a loser's FightResult never sets this. See engine/fight.py and
     # career/hype.py (style-to-hype overhaul session).
     adversity_comeback: bool = False
+    # Weight class the fight took place in. Empty string = pre-existing fight
+    # history recorded before this field existed (whatever division the fighter
+    # was in at the time -- see rankings.py's backward-compat handling).
+    weight_class: str = ""
 
 
 @dataclass
