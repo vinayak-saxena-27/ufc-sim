@@ -150,7 +150,7 @@ def generate_tier_fighter(
     }
     _ap = _age_params.get(tier_key, (27.0, 4.0, 18, 42))
     age = max(_ap[2], min(_ap[3], int(random.gauss(_ap[0], _ap[1]))))
-    return Fighter(
+    fighter = Fighter(
         name=regional_name(template_name),
         age=age,
         region=_TEMPLATE_REGIONS[template_name],
@@ -164,6 +164,26 @@ def generate_tier_fighter(
         style_flexibility=generate_style_flexibility(attrs["fight_iq"], template_name),
         **attrs,
     )
+    # Org Identity sessions: fighters generated directly into tier2 (mid-major)
+    # or tier4 (initial population pyramid) need an org immediately, same as
+    # fighters who PROMOTE into those tiers mid-sim (see
+    # matchmaking.apply_tier_transitions) -- otherwise the initial pyramid's
+    # tier2/tier4 fighters would sit org-less until natural promotions/
+    # demotions eventually replace them. Local import avoids a tiers.py <->
+    # orgs.org_registry import-order dependency at module load.
+    if tier_key == "tier1":
+        from orgs.org_registry import assign_regional_org
+        assign_regional_org(fighter)
+        fighter.org_start_day = 0
+    elif tier_key == "tier2":
+        from orgs.org_registry import assign_midmajor_org
+        assign_midmajor_org(fighter)
+        fighter.org_start_day = 0
+    elif tier_key == "tier4":
+        from orgs.org_registry import assign_org
+        assign_org(fighter)
+        fighter.org_start_day = 0
+    return fighter
 
 
 def generate_all_tiers(

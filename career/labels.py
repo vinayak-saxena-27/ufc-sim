@@ -98,15 +98,24 @@ _LEGEND_MIN_TITLE_WINS      = 2    # title-fight wins (from is_title=True wins)
 
 
 # ── Title holder registry ─────────────────────────────────────────────────────
-# Keys: (weight_class, tier_key).  Value: fighter_id of current holder, or None.
+# Keys: (weight_class, tier_key, org).  Value: fighter_id of current holder, or None.
+#
+# `org` dimension added in the Org Identity session: at tier4, each of the three
+# top-tier orgs (Apex FC / The League / Eastern Grand Prix) now has its OWN
+# belt per weight class, so the key must disambiguate them. Every other tier
+# has no org concept, so callers there pass org="" (the default) -- this keeps
+# every pre-existing 2-arg call site (cuts.py, weight_movement.py,
+# weight_transfers.py, nonelite_rankings.py, sim.py, title.py) working
+# unchanged for tier0-tier3, while tier4 call sites now pass the fighter's
+# actual org explicitly.
 
-_title_holders: dict[tuple[str, str], str | None] = {}
+_title_holders: dict[tuple[str, str, str], str | None] = {}
 
-# Consecutive successful-defense counter per (weight_class, tier_key). Added for
+# Consecutive successful-defense counter per (weight_class, tier_key, org). Added for
 # Weight Class Flex Session C's win-and-vacate path (8+ defenses gate — see
 # weight_transfers.py). Maintained entirely inside award_title()/vacate_title();
 # no other title-tracking behavior changes.
-_title_defenses: dict[tuple[str, str], int] = {}
+_title_defenses: dict[tuple[str, str, str], int] = {}
 
 
 def reset_title_registry() -> None:
@@ -117,13 +126,21 @@ def reset_title_registry() -> None:
 
 def award_title(winner: Fighter) -> None:
     """
-    Record winner as the current champion at their tier+division.
+    Record winner as the current champion at their tier+division(+org).
+
+    org is derived directly from the winner Fighter object (winner.org,
+    meaningful at tier1/tier2/tier4 -- Sessions B1/B2 extended org-affiliated
+    titles down to mid-major and regional) rather than requiring every caller
+    to pass it -- award_title already receives the whole Fighter, so there's
+    no ambiguity to resolve at the call site the way there is for the id-only
+    accessors below (get_champion_id/vacate_title/get_title_defenses).
 
     Also updates the defense counter: if winner already held this exact belt,
     this is a successful defense (increment); otherwise it's a new reign
     (different winner, or the belt was vacant) and the counter resets to 0.
     """
-    key = (winner.weight_class, winner.tier)
+    org = winner.org if winner.tier in ("tier1", "tier2", "tier4") else ""
+    key = (winner.weight_class, winner.tier, org)
     if _title_holders.get(key) == winner.fighter_id:
         _title_defenses[key] = _title_defenses.get(key, 0) + 1
     else:
@@ -131,21 +148,24 @@ def award_title(winner: Fighter) -> None:
     _title_holders[key] = winner.fighter_id
 
 
-def vacate_title(weight_class: str, tier_key: str) -> None:
-    """Vacate a title (injury, retirement, etc.). Also resets the defense counter."""
-    _title_holders[(weight_class, tier_key)] = None
-    _title_defenses[(weight_class, tier_key)] = 0
+def vacate_title(weight_class: str, tier_key: str, org: str = "") -> None:
+    """Vacate a title (injury, retirement, etc.). Also resets the defense counter.
+    org must be passed explicitly for tier4 (empty string = wrong belt)."""
+    _title_holders[(weight_class, tier_key, org)] = None
+    _title_defenses[(weight_class, tier_key, org)] = 0
 
 
-def get_champion_id(weight_class: str, tier_key: str) -> str | None:
-    """Return the fighter_id of the current champion, or None if vacant/unset."""
-    return _title_holders.get((weight_class, tier_key))
+def get_champion_id(weight_class: str, tier_key: str, org: str = "") -> str | None:
+    """Return the fighter_id of the current champion, or None if vacant/unset.
+    org must be passed explicitly for tier4 (empty string = wrong belt)."""
+    return _title_holders.get((weight_class, tier_key, org))
 
 
-def get_title_defenses(weight_class: str, tier_key: str) -> int:
+def get_title_defenses(weight_class: str, tier_key: str, org: str = "") -> int:
     """Return the current champion's consecutive successful-defense count
-    (0 if vacant, a freshly-won reign, or unset)."""
-    return _title_defenses.get((weight_class, tier_key), 0)
+    (0 if vacant, a freshly-won reign, or unset). org must be passed
+    explicitly for tier4 (empty string = wrong belt)."""
+    return _title_defenses.get((weight_class, tier_key, org), 0)
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
@@ -209,7 +229,8 @@ def compute_labels(fighter: Fighter, existing_labels: set[str]) -> set[str]:
     current_level = _TIER_LEVEL.get(fighter.tier, 0)
 
     # ── Champion (direct readout) ─────────────────────────────────────────────
-    if get_champion_id(fighter.weight_class, fighter.tier) == fighter.fighter_id:
+    _champ_org = fighter.org if fighter.tier in ("tier1", "tier2", "tier4") else ""
+    if get_champion_id(fighter.weight_class, fighter.tier, _champ_org) == fighter.fighter_id:
         labels.add(CHAMPION)
 
     # ── Legend (sticky lifetime label) ────────────────────────────────────────

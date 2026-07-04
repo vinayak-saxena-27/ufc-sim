@@ -163,6 +163,85 @@ def _style_modifier(result: FightResult) -> float:
     return 0.0
 
 
+# ── Part 5: Org hype-culture modifiers (Org Identity session) ──────────────────
+# Multiplier on the WIN/LOSS component of the delta only (not the style
+# component) -- reads "on top of existing finish/decision hype gain" literally.
+# Keyed by fighter.org (only meaningful at tier4; no-org/non-tier4 fighters get
+# multiplier=1.0, i.e. no change at all -- this is purely additive to every
+# system this session doesn't touch).
+#
+# The League contributes NOTHING here ("no method-specific modifier -- tournament
+# drama generates its own buzz"); its playoff/championship win bonus is a
+# separate FLAT addition applied directly by orgs/league_season.py via
+# apply_title_hype(), since only that module knows whether a given League fight
+# was a playoff/championship bout (this function only sees the fight result).
+
+APEX_FC_NAME:    str = "Apex FC"
+EASTERN_GP_NAME: str = "Eastern Grand Prix"
+
+APEX_KO_TKO_BONUS: float = 0.20
+"""Apex FC finish culture: +20% on a KO/TKO win (submission wins get no
+method-specific bonus/tax here -- spec calls out KO/TKO specifically)."""
+
+APEX_DECISION_TAX: float = -0.05
+"""Apex FC: slight boring-fight tax on decision wins -- crowds want finishes."""
+
+EASTERN_GP_STRIKER_BONUS: float = 0.10
+"""Eastern GP striking-art prestige: +10% on ALL hype gains (win or loss) for
+fighters whose style matches (see _is_eastern_gp_striker)."""
+
+EASTERN_GP_SUBMISSION_BONUS: float = 0.10
+"""Eastern GP multi-discipline culture respects submission wins."""
+
+EASTERN_GP_WRESTLING_DECISION_TAX: float = -0.05
+"""Eastern GP: pure-wrestling-dominant decisions are less culturally celebrated."""
+
+EASTERN_GP_STRIKER_ATTR_THRESHOLD: float = 8.0
+"""A fighter counts as an Eastern GP-culture striker if BOTH kickboxing and
+clinch are at/above this (zero-centered) level -- matches the Muay Thai /
+SEA Mixed templates' shape (career/templates.py)."""
+
+EASTERN_GP_WRESTLING_DOMINANT_THRESHOLD: float = 10.0
+"""Wrestling attribute floor for the 'pure wrestling dominant' decision tax."""
+
+
+def _is_eastern_gp_striker(fighter: Fighter) -> bool:
+    return (fighter.kickboxing >= EASTERN_GP_STRIKER_ATTR_THRESHOLD
+            and fighter.clinch >= EASTERN_GP_STRIKER_ATTR_THRESHOLD)
+
+
+def _is_wrestling_dominant(fighter: Fighter) -> bool:
+    return (fighter.wrestling >= EASTERN_GP_WRESTLING_DOMINANT_THRESHOLD
+            and fighter.wrestling > fighter.boxing
+            and fighter.wrestling > fighter.kickboxing)
+
+
+def _org_culture_multiplier(fighter: Fighter, result: FightResult) -> float:
+    """Multiplier on the win/loss hype-delta component, keyed by fighter.org.
+    Percentage effects ADD (not compound) when more than one applies --
+    simpler and more predictable than multiplicative stacking for a first pass."""
+    org = fighter.org
+    if org == APEX_FC_NAME:
+        if result.outcome == "win":
+            if result.method == "KO/TKO":
+                return 1.0 + APEX_KO_TKO_BONUS
+            if result.method == "decision":
+                return 1.0 + APEX_DECISION_TAX
+        return 1.0
+
+    if org == EASTERN_GP_NAME:
+        pct = 0.0
+        if _is_eastern_gp_striker(fighter):
+            pct += EASTERN_GP_STRIKER_BONUS
+        if result.outcome == "win" and result.method == "submission":
+            pct += EASTERN_GP_SUBMISSION_BONUS
+        if result.outcome == "win" and result.method == "decision" and _is_wrestling_dominant(fighter):
+            pct += EASTERN_GP_WRESTLING_DECISION_TAX
+        return 1.0 + pct
+
+    return 1.0   # "" (no org) / The League: unchanged
+
+
 # ── Part 3: Per-fight update entry point ────────────────────────────────────────
 
 def update_hype_after_fight(fighter: Fighter, opponent: Fighter) -> None:
@@ -182,8 +261,9 @@ def update_hype_after_fight(fighter: Fighter, opponent: Fighter) -> None:
         return
     result = fighter.fight_history[-1]
 
-    delta = _win_modifier(result, opponent) if result.outcome == "win" else _loss_modifier(result)
-    delta += _style_modifier(result)
+    base = _win_modifier(result, opponent) if result.outcome == "win" else _loss_modifier(result)
+    base *= _org_culture_multiplier(fighter, result)
+    delta = base + _style_modifier(result)
 
     fighter.hype = _apply_floor(fighter.hype + delta)
 

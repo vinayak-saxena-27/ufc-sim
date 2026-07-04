@@ -224,7 +224,7 @@ def _is_likely_next_challenger(fighter: Fighter, pool: list[Fighter], weight_cla
                 return e.rank == 1
         return False
 
-    champ_id = get_champion_id(weight_class, fighter.tier)
+    champ_id = get_champion_id(weight_class, fighter.tier, fighter.org if fighter.tier in ("tier1", "tier2", "tier4") else "")
     candidates = [f for f in pool if f.fighter_id != champ_id]
     if not candidates:
         return False
@@ -248,12 +248,16 @@ def _division_congestion(
     weight_class: str,
     tier_key: str,
     pools: dict[str, dict[str, list[Fighter]]],
+    org: str = "",
 ) -> float:
-    """Higher = more congested / blocked path to a title in this division+tier."""
+    """Higher = more congested / blocked path to a title in this division+tier.
+    org must be passed for tier4 (a weight-class move stays within the fighter's
+    current org, so callers pass the fighter's own org for both the home and
+    adjacent-division checks)."""
     pool = pools.get(weight_class, {}).get(tier_key, [])
     if tier_key == "tier4":
         depth = len(get_rankings(weight_class))
-        champ_id = get_champion_id(weight_class, tier_key)
+        champ_id = get_champion_id(weight_class, tier_key, org)
         champ_defenses = 0
         if champ_id:
             champ = next((f for f in pool if f.fighter_id == champ_id), None)
@@ -269,8 +273,9 @@ def _opportunity_score(
     target_idx: int,
 ) -> float:
     """Positive = the division at target_idx looks more open than fighter's own."""
-    home = _division_congestion(fighter.weight_class, fighter.tier, pools)
-    adjacent = _division_congestion(WEIGHT_CLASSES[target_idx], fighter.tier, pools)
+    org = fighter.org if fighter.tier == "tier4" else ""
+    home = _division_congestion(fighter.weight_class, fighter.tier, pools, org)
+    adjacent = _division_congestion(WEIGHT_CLASSES[target_idx], fighter.tier, pools, org)
     return home - adjacent
 
 
