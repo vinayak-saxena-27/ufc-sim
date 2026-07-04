@@ -65,7 +65,7 @@ from dataclasses import dataclass
 
 from career.fighter import Fighter
 from career.tiers import TIER_LEVELS
-from career.academies import ACADEMY_PIPELINE
+from career.academy_reputation import get_effective_pipeline_strength
 from career.labels import get_champion_id
 from career.cuts import is_removed
 from career.rankings import (
@@ -346,7 +346,7 @@ def _rank_modifier(rank: int | None, list_size: int, is_champion: bool, from_tie
 
 
 def _pipeline_modifier(academy_name: str) -> float:
-    ps = ACADEMY_PIPELINE.get(academy_name, 0.0)
+    ps = get_effective_pipeline_strength(academy_name)
     return max(0.1, 1.0 + ps * SCOUT_PIPELINE_SCALE)
 
 

@@ -35,6 +35,9 @@ from career.development import (
     advance_all_development, apply_win_development_boost,
     apply_phase_development_feedback, reset_development_advancement,
 )
+from career.academy_reputation import (
+    update_academy_reputations, reset_academy_reputation,
+)
 from career.hype import (
     update_hype_after_fight, advance_all_hype_decay, reset_hype_decay,
 )
@@ -123,6 +126,7 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
     reset_sim_clock()
     reset_age_advancement()
     reset_development_advancement()
+    reset_academy_reputation()
     reset_hype_decay()
     initialize_replenishment()
     reset_retirement_scanning()
@@ -248,6 +252,8 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
         # Development sweeps the same cadence; called after age so age_factor reflects
         # the just-incremented age (fighters who turned 23 this year get age_factor=0).
         advance_all_development(all_fighters)
+        # Academy reputation feedback loop: same annual cadence, alongside development.
+        update_academy_reputations(all_fighters, get_sim_day())
         # Hype decay: same annual cadence -- inactive fighters (including those who
         # went quiet) lose buzz proportionally.
         advance_all_hype_decay(all_fighters)
@@ -317,6 +323,7 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
                     advance_sim_clock()
                     advance_all_ages(all_fighters)
                     advance_all_development(all_fighters)
+                    update_academy_reputations(all_fighters, get_sim_day())
                     advance_all_hype_decay(all_fighters)
 
         if debug:

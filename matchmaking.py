@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 from career.fighter import Fighter
 from career.tiers import TIER_LEVELS
-from career.academies import ACADEMY_PIPELINE
+from career.academy_reputation import get_effective_pipeline_strength
 from career.rankings import is_eligible_vs_ranked, get_ranked_ids, get_rankings, RANKINGS_SIZE
 from career.org_rankings import get_org_ranked_ids, get_org_rankings
 from orgs.org_registry import assign_org, assign_midmajor_org, assign_regional_org, capture_midmajor_feed
@@ -386,7 +386,7 @@ def check_promotion(fighter: Fighter) -> bool:
     # Effect 2: small direct nudge for well-connected academies.
     # Only fires when fighter is exactly one win short and academy has positive pipeline.
     if wins == PROMOTE_WINS_IN_LAST - 1:
-        ps = ACADEMY_PIPELINE.get(fighter.academy, 0.0)
+        ps = get_effective_pipeline_strength(fighter.academy)
         if ps > 0.0 and random.random() < ps * PROMO_DIRECT_NUDGE_SCALE:
             return True
     return False
