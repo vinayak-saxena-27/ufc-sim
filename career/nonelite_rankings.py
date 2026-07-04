@@ -73,7 +73,7 @@ from career.rankings import (
     _confidence, _recency_weighted_win_rate,
     _W_WIN_RATE, _W_QUALITY, _W_HYPE, _HYPE_NORM,
 )
-from orgs.org_registry import MIDMAJOR_ORG_NAMES
+from orgs.org_registry import MIDMAJOR_ORG_NAMES, REGIONAL_ORG_NAMES
 from sim_calendar import days_since, _last_stamped_day
 
 
@@ -285,7 +285,9 @@ CHAMPION_BONUS_MULT: float = 1.5
 also holds their tier's title -- "champion" is a stronger signal than mere
 rank position, consistent with Regional champions being the primary
 Mid-major fast-track signal despite Regional having no formal list at all.
-Applies at every tier EXCEPT tier2 -- see MIDMAJOR_CHAMPION_RETENTION_MULT."""
+Applies only at tier3 (Top-org) -- tier1 and tier2 get their OWN retention
+multipliers below instead (weaker/stronger flavors of the same "reluctant to
+leave while on top of their own org" idea)."""
 
 MIDMAJOR_CHAMPION_RETENTION_MULT: float = 0.4
 """Org Identity Session B1, Part 3 (Apex over-concentration fix): mid-major
@@ -294,6 +296,13 @@ MIDMAJOR_CHAMPION_RETENTION_MULT: float = 0.4
 who are more clearly outgrowing their level. This DELIBERATELY diverges from
 the boost every other tier's champions get; confirmed with the user before
 building (the two effects directly conflicted for tier2 otherwise)."""
+
+REGIONAL_CHAMPION_RETENTION_MULT: float = 0.7
+"""Org Identity Session B2, Part 4: Regional (tier1) champions ALSO get a
+reduction, mirroring B1's mid-major logic one tier down -- but MILDER
+(0.7 vs mid-major's 0.4) per spec's own "slightly less likely" wording. A
+Regional title carries real but much smaller "king of my org" pull than a
+mid-major belt."""
 
 SCOUT_PIPELINE_SCALE: float = 0.03
 """Same functional form as development.py's _pipeline_modifier
@@ -329,6 +338,8 @@ def _rank_modifier(rank: int | None, list_size: int, is_champion: bool, from_tie
     base = _rank_position_modifier(rank, list_size)
     if not is_champion:
         return base
+    if from_tier == "tier1":
+        return base * REGIONAL_CHAMPION_RETENTION_MULT
     if from_tier == "tier2":
         return base * MIDMAJOR_CHAMPION_RETENTION_MULT
     return base * CHAMPION_BONUS_MULT
@@ -456,18 +467,24 @@ def maybe_apply_scout_notice(
 ) -> None:
     """
     Evaluate the scout-notice fast-track for every eligible fighter across
-    all weight classes: Regional champions (-> Mid-major), Mid-major top-5
-    PER ORG (-> Top-org, Org Identity Session B1), Top-org top-15 (-> Elite).
-    Call right after update_nonelite_rankings() (which itself should follow
-    rankings.update_rankings()) so rank data and champion registries are
-    fresh. Purely additive to matchmaking.check_promotion/check_demotion,
-    which are not called or modified here.
+    all weight classes: Regional champions PER ORG (-> Mid-major, Org
+    Identity Session B2), Mid-major top-5 PER ORG (-> Top-org, Session B1),
+    Top-org top-15 (-> Elite). Call right after update_nonelite_rankings()
+    (which itself should follow rankings.update_rankings()) so rank data and
+    champion registries are fresh. Purely additive to matchmaking.
+    check_promotion/check_demotion, which are not called or modified here.
     """
     for wc, tier_pools in pools.items():
-        # Regional champion -> Mid-major (no formal list; champion is the signal)
-        champ1_id = get_champion_id(wc, "tier1")
-        if champ1_id is not None:
-            champ1 = next((f for f in tier_pools.get("tier1", []) if f.fighter_id == champ1_id), None)
+        # Regional champion PER ORG -> Mid-major (Session B2, Part 4: no
+        # formal list at Regional -- each of the twelve regional orgs' own
+        # champion is its own independent signal, same "no formal list,
+        # champion only" shape as the pre-B2 combined check).
+        regional_pool_wc = tier_pools.get("tier1", [])
+        for org in REGIONAL_ORG_NAMES:
+            champ1_id = get_champion_id(wc, "tier1", org)
+            if champ1_id is None:
+                continue
+            champ1 = next((f for f in regional_pool_wc if f.fighter_id == champ1_id), None)
             if champ1 is not None:
                 _maybe_promote(champ1, "tier1", pools, fight_num, rank=None, list_size=1, is_champion=True)
 

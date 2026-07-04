@@ -196,7 +196,7 @@ def execute_removal(
     pool[:] = [f for f in pool if f is not fighter]
 
     title_vacated = False
-    _org = fighter.org if tier in ("tier2", "tier4") else ""
+    _org = fighter.org if tier in ("tier1", "tier2", "tier4") else ""
     if get_champion_id(wc, tier, _org) == fighter.fighter_id:
         vacate_title(wc, tier, _org)
         title_vacated = True

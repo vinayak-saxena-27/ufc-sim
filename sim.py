@@ -61,7 +61,7 @@ from career.org_rankings import (
 )
 from orgs.org_registry import (
     ORG_NAMES, APEX_FC_NAME, THE_LEAGUE_NAME, EASTERN_GP_NAME, decision_mode_for_org,
-    MIDMAJOR_ORG_NAMES,
+    MIDMAJOR_ORG_NAMES, REGIONAL_ORG_NAMES,
 )
 from orgs.league_season import (
     run_league_season, reset_league_season, reset_league_history, get_league_history,
@@ -177,13 +177,13 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
         # pool where the fight took place, not where A ends up afterward.
         fight_wc   = a.weight_class
         fight_tier = a.tier
-        # tier2 (mid-major) and tier4 (top-tier) both carry a real org; other
-        # tiers have no org concept. Regular tier2 matchmaking is NOT org-
-        # partitioned (only mid-major TITLE fights are, per Session B1 Part 5)
-        # -- so the title-fight activity counter below tracks fighter A's org
-        # regardless of which org B happens to be from, same as tier4's
-        # pre-hard-partition counting convention.
-        fight_org  = a.org if fight_tier in ("tier2", "tier4") else ""
+        # tier1 (regional), tier2 (mid-major), and tier4 (top-tier) all carry
+        # a real org; other tiers have no org concept. Regular tier1/tier2
+        # matchmaking is NOT org-partitioned (only title fights are, per
+        # Session B1 Part 5 / B2 Part 4) -- so the title-fight activity
+        # counter below tracks fighter A's org regardless of which org B
+        # happens to be from, same as tier4's pre-hard-partition convention.
+        fight_org  = a.org if fight_tier in ("tier1", "tier2", "tier4") else ""
         current_day = get_sim_day()
 
         p_a_wins = _true_prob(a.overall, b.overall)
@@ -561,7 +561,7 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
     _fighter_index = {f.fighter_id: f for f in all_fighters}
     any_champ = False
     for wc in WEIGHT_CLASSES:
-        for tier_key in ("tier1", "tier3"):   # no titles at tier0; tier2/tier4 are org-split below
+        for tier_key in ("tier3",):   # no titles at tier0; tier1/tier2/tier4 are org-split below
             champ_id = get_champion_id(wc, tier_key)
             if champ_id:
                 champ = _fighter_index.get(champ_id)
@@ -569,6 +569,19 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
                 rec   = champ.record_str if champ else "?"
                 console.print(
                     f"  {_WC_SHORT[wc]} {_TIER_SHORT[tier_key]:<12}"
+                    f"  [bold yellow]{name}[/bold yellow]"
+                    f"  [dim]{rec}[/dim]"
+                )
+                any_champ = True
+        # tier1: one belt per regional org (Session B2).
+        for org in REGIONAL_ORG_NAMES:
+            champ_id = get_champion_id(wc, "tier1", org)
+            if champ_id:
+                champ = _fighter_index.get(champ_id)
+                name  = champ.name if champ else f"<id {champ_id[:8]}>"
+                rec   = champ.record_str if champ else "?"
+                console.print(
+                    f"  {_WC_SHORT[wc]} {org:<28}"
                     f"  [bold yellow]{name}[/bold yellow]"
                     f"  [dim]{rec}[/dim]"
                 )
@@ -683,6 +696,43 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
         f"[bold]{mm_grand_total}[/bold]",
     )
     console.print(mmot2)
+    console.print()
+
+    # ── Regional Org Distribution (Session B2, deliverable a) ────────────────
+    # Twelve org columns would overflow an 80-col console the way the mid-major
+    # table's 8 did before that fix (see memory) -- transposed here (orgs as
+    # ROWS, templates as columns) instead, which also reads more naturally for
+    # "which template(s) dominate this specific org."
+    console.print()
+    console.print(Rule("[bold]Regional Org Distribution (tier1)[/bold]"))
+    console.print()
+
+    all_regional = [f for f in all_fighters if f.tier == "tier1"]
+    _BASE_TEMPLATES = ["dagestan_sambo", "american_wrestling", "brazilian", "muay_thai", "sea_mixed"]
+
+    rot = Table(box=box.SIMPLE_HEAD, show_lines=False, padding=(0, 1))
+    rot.add_column("Org", style="white", min_width=22, no_wrap=True)
+    for tmpl in _BASE_TEMPLATES:
+        rot.add_column(_TEMPLATE_SHORT[tmpl], justify="right", style="bold blue", width=6)
+    rot.add_column("Other", justify="right", style="dim", width=6)
+    rot.add_column("Total", justify="right", style="dim", width=6)
+
+    reg_grand_total = 0
+    for org in REGIONAL_ORG_NAMES:
+        org_fighters = [f for f in all_regional if f.org == org]
+        row = [org]
+        base_total = 0
+        for tmpl in _BASE_TEMPLATES:
+            n = sum(1 for f in org_fighters if f.template == tmpl)
+            base_total += n
+            row.append(str(n))
+        other = len(org_fighters) - base_total
+        row.append(str(other))
+        row.append(str(len(org_fighters)))
+        reg_grand_total += len(org_fighters)
+        rot.add_row(*row)
+    rot.add_row("[bold]All[/bold]", *[""] * (len(_BASE_TEMPLATES) + 1), f"[bold]{reg_grand_total}[/bold]")
+    console.print(rot)
     console.print()
 
     # ── Standings — one table per weight class ───────────────────────────────

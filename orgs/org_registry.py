@@ -1,5 +1,5 @@
 """
-org_registry.py -- Organization entities (Org Identity, Sessions A + B1).
+org_registry.py -- Organization entities (Org Identity, Sessions A + B1 + B2).
 
 ## Top-tier orgs (Session A)
 
@@ -38,13 +38,30 @@ destination instead. This matches The League's mid-pack prestige (4.0, between
 Apex's 10.0 and Eastern GP's 7.0) and Session A's finding that it's the org
 fighters get poached AWAY from, not funneled toward.
 
+## Regional orgs (Session B2)
+
+Twelve tier1 orgs, each feeding ONE of the eight mid-major orgs above
+(primary + secondary). No orgs feed INTO Regional by named pipeline
+(`primary_feed_from=[]` on all twelve -- Amateur stays intentionally
+unnamed/informal, per spec). Mid-major orgs' `primary_feed_from` is now
+populated with their regional feeders.
+
+Unlike the tier2->tier3(org-less)->tier4 gap Session B1 had to bridge with a
+persisted `midmajor_feed_org` field, tier0->tier1->tier2 has NO gap tier --
+promotion goes directly from tier1 (has an org) to tier2 (needs one), so the
+regional-org feed signal is read directly off `fighter.org` at the moment of
+promotion (see `assign_midmajor_org`'s Session B2 addition below) with no new
+Fighter field required.
+
 ## Prestige
 
 Uncapped, zero-centered floats. Top-tier: Apex FC 10.0 > Eastern GP 7.0 >
 The League 4.0 (Session A). Mid-major: all clearly below top-tier, small
 differences between them -- Contender Series FC and Vanguard MMA (established
-feeders, per spec) at 2.0, the remaining six at 1.0. Not currently consumed by
-any mechanic (same as Session A) -- reserved for a future prestige-weighted
+feeders, per spec) at 2.0, the remaining six at 1.0. Regional: clearly below
+mid-major -- Celtic Warriors and Amazon Combat (established pipelines, per
+spec) at 0.6, the remaining ten at 0.4. Not currently consumed by any
+mechanic (same as Sessions A/B1) -- reserved for a future prestige-weighted
 mechanic.
 """
 from __future__ import annotations
@@ -77,6 +94,27 @@ MIDMAJOR_ORG_NAMES: list[str] = [
     CONTENDER_SERIES_FC_NAME, TITAN_FC_NAME, VANGUARD_MMA_NAME, GLADIUS_FC_NAME,
     AFRICAN_WARRIORS_NAME, GULF_COMBAT_SERIES_NAME, SOUTH_ASIA_COMBAT_NAME,
     FAR_EAST_CIRCUIT_NAME,
+]
+
+# Regional org names (Session B2) -- defined before the mid-major Org instances
+# below so their primary_feed_from can reference them directly.
+IRON_CIRCLE_NAME:           str = "Iron Circle"
+PRAIRIE_COMBAT_NAME:        str = "Prairie Combat League"
+CELTIC_WARRIORS_NAME:       str = "Celtic Warriors"
+MEDITERRANEAN_CAGE_NAME:    str = "Mediterranean Cage"
+BALKAN_FIGHTING_NAME:       str = "Balkan Fighting Series"
+AMAZON_COMBAT_NAME:         str = "Amazon Combat"
+AZTEC_FIGHTING_NAME:        str = "Aztec Fighting Series"
+NILE_COMBAT_NAME:           str = "Nile Combat League"
+SAHEL_FIGHTING_NAME:        str = "Sahel Fighting Championship"
+CRESCENT_COMBAT_NAME:       str = "Crescent Combat"
+INDUS_WARRIORS_NAME:        str = "Indus Warriors"
+MEKONG_CIRCUIT_NAME:        str = "Mekong Circuit"
+
+REGIONAL_ORG_NAMES: list[str] = [
+    IRON_CIRCLE_NAME, PRAIRIE_COMBAT_NAME, CELTIC_WARRIORS_NAME, MEDITERRANEAN_CAGE_NAME,
+    BALKAN_FIGHTING_NAME, AMAZON_COMBAT_NAME, AZTEC_FIGHTING_NAME, NILE_COMBAT_NAME,
+    SAHEL_FIGHTING_NAME, CRESCENT_COMBAT_NAME, INDUS_WARRIORS_NAME, MEKONG_CIRCUIT_NAME,
 ]
 
 
@@ -158,41 +196,49 @@ CONTENDER_SERIES_FC = Org(
     name=CONTENDER_SERIES_FC_NAME, tier="tier2", format="standard", scoring="round_by_round",
     hype_culture=MIDMAJOR_HYPE_CULTURE, prestige=2.0,
     primary_feeds_to=APEX_FC_NAME, secondary_feeds_to=THE_LEAGUE_NAME,
+    primary_feed_from=[IRON_CIRCLE_NAME],
 )
 TITAN_FC = Org(
     name=TITAN_FC_NAME, tier="tier2", format="standard", scoring="round_by_round",
     hype_culture=MIDMAJOR_HYPE_CULTURE, prestige=1.0,
     primary_feeds_to=APEX_FC_NAME, secondary_feeds_to=THE_LEAGUE_NAME,
+    primary_feed_from=[PRAIRIE_COMBAT_NAME],
 )
 VANGUARD_MMA = Org(
     name=VANGUARD_MMA_NAME, tier="tier2", format="standard", scoring="round_by_round",
     hype_culture=MIDMAJOR_HYPE_CULTURE, prestige=2.0,
     primary_feeds_to=APEX_FC_NAME, secondary_feeds_to=EASTERN_GP_NAME,
+    primary_feed_from=[CELTIC_WARRIORS_NAME, MEDITERRANEAN_CAGE_NAME, BALKAN_FIGHTING_NAME],
 )
 GLADIUS_FC = Org(
     name=GLADIUS_FC_NAME, tier="tier2", format="standard", scoring="round_by_round",
     hype_culture=MIDMAJOR_HYPE_CULTURE, prestige=1.0,
     primary_feeds_to=APEX_FC_NAME, secondary_feeds_to=THE_LEAGUE_NAME,
+    primary_feed_from=[AMAZON_COMBAT_NAME, AZTEC_FIGHTING_NAME],
 )
 AFRICAN_WARRIORS = Org(
     name=AFRICAN_WARRIORS_NAME, tier="tier2", format="standard", scoring="round_by_round",
     hype_culture=MIDMAJOR_HYPE_CULTURE, prestige=1.0,
     primary_feeds_to=APEX_FC_NAME, secondary_feeds_to=THE_LEAGUE_NAME,
+    primary_feed_from=[NILE_COMBAT_NAME, SAHEL_FIGHTING_NAME],
 )
 GULF_COMBAT_SERIES = Org(
     name=GULF_COMBAT_SERIES_NAME, tier="tier2", format="standard", scoring="round_by_round",
     hype_culture=MIDMAJOR_HYPE_CULTURE, prestige=1.0,
     primary_feeds_to=EASTERN_GP_NAME, secondary_feeds_to=APEX_FC_NAME,
+    primary_feed_from=[CRESCENT_COMBAT_NAME],
 )
 SOUTH_ASIA_COMBAT_LEAGUE = Org(
     name=SOUTH_ASIA_COMBAT_NAME, tier="tier2", format="standard", scoring="round_by_round",
     hype_culture=MIDMAJOR_HYPE_CULTURE, prestige=1.0,
     primary_feeds_to=EASTERN_GP_NAME, secondary_feeds_to=APEX_FC_NAME,
+    primary_feed_from=[INDUS_WARRIORS_NAME],
 )
 FAR_EAST_CIRCUIT = Org(
     name=FAR_EAST_CIRCUIT_NAME, tier="tier2", format="standard", scoring="round_by_round",
     hype_culture=MIDMAJOR_HYPE_CULTURE, prestige=1.0,
     primary_feeds_to=EASTERN_GP_NAME, secondary_feeds_to=THE_LEAGUE_NAME,
+    primary_feed_from=[MEKONG_CIRCUIT_NAME],
 )
 
 MIDMAJOR_ORGS: dict[str, Org] = {
@@ -204,6 +250,127 @@ MIDMAJOR_ORGS: dict[str, Org] = {
     GULF_COMBAT_SERIES_NAME:  GULF_COMBAT_SERIES,
     SOUTH_ASIA_COMBAT_NAME:   SOUTH_ASIA_COMBAT_LEAGUE,
     FAR_EAST_CIRCUIT_NAME:    FAR_EAST_CIRCUIT,
+}
+
+# ── Regional org entities (Session B2) ───────────────────────────────────────
+# format/scoring uniform ("standard"/"round_by_round"), hype_culture neutral
+# (same rationale as mid-major's MIDMAJOR_HYPE_CULTURE -- deferred).
+# prestige: Celtic Warriors & Amazon Combat (established pipelines, per spec)
+# = 0.6; the rest = 0.4. All clearly below mid-major's 1.0-2.0 range.
+#
+# primary_feeds_to is ALWAYS a MID-MAJOR org name (the real tier1->tier2
+# promotion target -- see assign_midmajor_org's Session B2 addition below).
+#
+# ANOMALY FOUND AND RESOLVED: the spec's table lists a TOP-TIER org name (not
+# a mid-major one) as the "primary" or "secondary" feed for 6 of the 12
+# regional orgs (Balkan Fighting Series, Nile Combat League, Sahel Fighting
+# Championship, Crescent Combat, Indus Warriors, Mekong Circuit) -- e.g.
+# "Mekong Circuit | primary=Eastern GP | secondary=Far East Circuit". A
+# regional org cannot mechanically promote a fighter 2 tiers at once (tier1
+# always promotes to tier2, never straight to tier4) -- the tier ladder has
+# no such shortcut anywhere else in this project. Cross-checking the other 5
+# anomalous rows shows the listed top-tier name always matches that row's
+# PRIMARY mid-major feeder's OWN primary/secondary_feeds_to (e.g. Balkan's
+# "secondary=Eastern GP" exactly matches Vanguard MMA's own secondary_feeds_to)
+# -- strong evidence the table's top-tier mentions are a narrative PREVIEW of
+# the ultimate 3-hop destination, not a literal second promotion target.
+# Resolved by treating the real mechanical `primary_feeds_to` as the mid-major
+# org named in that row (regardless of which table column it appeared in --
+# Mekong Circuit's table row has the mid-major name, Far East Circuit, in the
+# "secondary" column, so that becomes ITS primary_feeds_to here), and
+# substituting a geographically/thematically sensible SECOND mid-major org
+# as `secondary_feeds_to` for the 6 anomalous rows (documented per-org below).
+# The realized pipeline still funnels toward the spec's intended top-tier
+# destination most of the time -- it just takes the correct two real hops
+# (e.g. Mekong Circuit -> Far East Circuit -> Eastern Grand Prix, since Far
+# East Circuit's own primary_feeds_to IS Eastern GP) instead of a broken
+# tier-skip. Flagged clearly here since this is an interpretive call, not a
+# literal reading of the spec table.
+
+IRON_CIRCLE = Org(
+    name=IRON_CIRCLE_NAME, tier="tier1", format="standard", scoring="round_by_round",
+    hype_culture={}, prestige=0.4,
+    primary_feeds_to=CONTENDER_SERIES_FC_NAME, secondary_feeds_to=TITAN_FC_NAME,
+)
+PRAIRIE_COMBAT = Org(
+    name=PRAIRIE_COMBAT_NAME, tier="tier1", format="standard", scoring="round_by_round",
+    hype_culture={}, prestige=0.4,
+    primary_feeds_to=TITAN_FC_NAME, secondary_feeds_to=CONTENDER_SERIES_FC_NAME,
+)
+CELTIC_WARRIORS = Org(
+    name=CELTIC_WARRIORS_NAME, tier="tier1", format="standard", scoring="round_by_round",
+    hype_culture={}, prestige=0.6,
+    primary_feeds_to=VANGUARD_MMA_NAME, secondary_feeds_to=CONTENDER_SERIES_FC_NAME,
+)
+MEDITERRANEAN_CAGE = Org(
+    name=MEDITERRANEAN_CAGE_NAME, tier="tier1", format="standard", scoring="round_by_round",
+    hype_culture={}, prestige=0.4,
+    primary_feeds_to=VANGUARD_MMA_NAME, secondary_feeds_to=GLADIUS_FC_NAME,
+)
+BALKAN_FIGHTING = Org(
+    name=BALKAN_FIGHTING_NAME, tier="tier1", format="standard", scoring="round_by_round",
+    hype_culture={}, prestige=0.4,
+    # secondary substituted (table said "Eastern GP", a top-tier org) --
+    # Gulf Combat Series: geographic proximity (Eastern Europe/Middle East)
+    # and shares Dagestan/Sambo affinity.
+    primary_feeds_to=VANGUARD_MMA_NAME, secondary_feeds_to=GULF_COMBAT_SERIES_NAME,
+)
+AMAZON_COMBAT = Org(
+    name=AMAZON_COMBAT_NAME, tier="tier1", format="standard", scoring="round_by_round",
+    hype_culture={}, prestige=0.6,
+    primary_feeds_to=GLADIUS_FC_NAME, secondary_feeds_to=CONTENDER_SERIES_FC_NAME,
+)
+AZTEC_FIGHTING = Org(
+    name=AZTEC_FIGHTING_NAME, tier="tier1", format="standard", scoring="round_by_round",
+    hype_culture={}, prestige=0.4,
+    primary_feeds_to=GLADIUS_FC_NAME, secondary_feeds_to=CONTENDER_SERIES_FC_NAME,
+)
+NILE_COMBAT = Org(
+    name=NILE_COMBAT_NAME, tier="tier1", format="standard", scoring="round_by_round",
+    hype_culture={}, prestige=0.4,
+    # secondary substituted (table said "Apex FC") -- Gulf Combat Series:
+    # North/East Africa - Middle East geographic proximity.
+    primary_feeds_to=AFRICAN_WARRIORS_NAME, secondary_feeds_to=GULF_COMBAT_SERIES_NAME,
+)
+SAHEL_FIGHTING = Org(
+    name=SAHEL_FIGHTING_NAME, tier="tier1", format="standard", scoring="round_by_round",
+    hype_culture={}, prestige=0.4,
+    # secondary substituted (table said "The League") -- Contender Series FC:
+    # West Africa's historical Atlantic/N.American ties; Contender's own
+    # secondary_feeds_to is also The League, echoing the spec's intent.
+    primary_feeds_to=AFRICAN_WARRIORS_NAME, secondary_feeds_to=CONTENDER_SERIES_FC_NAME,
+)
+CRESCENT_COMBAT = Org(
+    name=CRESCENT_COMBAT_NAME, tier="tier1", format="standard", scoring="round_by_round",
+    hype_culture={}, prestige=0.4,
+    # secondary substituted (table said "Apex FC") -- South Asia Combat
+    # League: Middle East - South Asia geographic/cultural proximity.
+    primary_feeds_to=GULF_COMBAT_SERIES_NAME, secondary_feeds_to=SOUTH_ASIA_COMBAT_NAME,
+)
+INDUS_WARRIORS = Org(
+    name=INDUS_WARRIORS_NAME, tier="tier1", format="standard", scoring="round_by_round",
+    hype_culture={}, prestige=0.4,
+    # secondary substituted (table said "Eastern GP") -- Gulf Combat Series:
+    # mirrors Crescent Combat's pairing the other direction.
+    primary_feeds_to=SOUTH_ASIA_COMBAT_NAME, secondary_feeds_to=GULF_COMBAT_SERIES_NAME,
+)
+MEKONG_CIRCUIT = Org(
+    name=MEKONG_CIRCUIT_NAME, tier="tier1", format="standard", scoring="round_by_round",
+    hype_culture={}, prestige=0.4,
+    # primary/secondary SWAPPED from the table's literal "primary=Eastern GP
+    # (top-tier)/secondary=Far East Circuit" -- see the anomaly note above.
+    # Far East Circuit's OWN primary_feeds_to is Eastern GP, so the intended
+    # destination is still reached, just via the correct 2-hop hop-by-hop path.
+    primary_feeds_to=FAR_EAST_CIRCUIT_NAME, secondary_feeds_to=SOUTH_ASIA_COMBAT_NAME,
+)
+
+REGIONAL_ORGS: dict[str, Org] = {
+    IRON_CIRCLE_NAME: IRON_CIRCLE, PRAIRIE_COMBAT_NAME: PRAIRIE_COMBAT,
+    CELTIC_WARRIORS_NAME: CELTIC_WARRIORS, MEDITERRANEAN_CAGE_NAME: MEDITERRANEAN_CAGE,
+    BALKAN_FIGHTING_NAME: BALKAN_FIGHTING, AMAZON_COMBAT_NAME: AMAZON_COMBAT,
+    AZTEC_FIGHTING_NAME: AZTEC_FIGHTING, NILE_COMBAT_NAME: NILE_COMBAT,
+    SAHEL_FIGHTING_NAME: SAHEL_FIGHTING, CRESCENT_COMBAT_NAME: CRESCENT_COMBAT,
+    INDUS_WARRIORS_NAME: INDUS_WARRIORS, MEKONG_CIRCUIT_NAME: MEKONG_CIRCUIT,
 }
 
 
@@ -298,6 +465,58 @@ _DEFAULT_MIDMAJOR_ORG_WEIGHTS: dict[str, float] = {org: 1.0 / len(MIDMAJOR_ORG_N
 (crossover/lateral fighters) -- same rationale as _DEFAULT_ORG_WEIGHTS, but
 uniform rather than Apex-skewed since there's no single 'dominant' mid-major."""
 
+# ── Part 2 (Session B2): per-template REGIONAL org-assignment weighting ─────
+# American Wrestling: Iron Circle/Prairie Combat League-heavy.
+# Brazilian/American Wrestling: Celtic Warriors, Aztec Fighting Series.
+# Brazilian: Mediterranean Cage, Amazon Combat.
+# Dagestan/Sambo: Balkan Fighting Series, Crescent Combat.
+# Nile Combat League/Sahel Fighting Championship ("weighted mix" per spec,
+#   same pattern as African Warriors Championship in B1): Brazilian + American
+#   Wrestling.
+# Indus Warriors ("weighted mix" per spec): Dagestan/Sambo + SEA Mixed.
+# Muay Thai/SEA Mixed: Mekong Circuit-heavy.
+# Every template retains a nonzero chance at every regional org. Weights here
+# are relative (random.choices normalizes internally) -- not required to sum
+# to exactly 1.0, same convention as every prior org-weighting table.
+
+TEMPLATE_REGIONAL_ORG_WEIGHTS: dict[str, dict[str, float]] = {
+    "dagestan_sambo": {
+        IRON_CIRCLE_NAME: 1, PRAIRIE_COMBAT_NAME: 1, CELTIC_WARRIORS_NAME: 1,
+        MEDITERRANEAN_CAGE_NAME: 1, BALKAN_FIGHTING_NAME: 8, AMAZON_COMBAT_NAME: 1,
+        AZTEC_FIGHTING_NAME: 1, NILE_COMBAT_NAME: 1, SAHEL_FIGHTING_NAME: 1,
+        CRESCENT_COMBAT_NAME: 8, INDUS_WARRIORS_NAME: 5, MEKONG_CIRCUIT_NAME: 1,
+    },
+    "american_wrestling": {
+        IRON_CIRCLE_NAME: 8, PRAIRIE_COMBAT_NAME: 8, CELTIC_WARRIORS_NAME: 4,
+        MEDITERRANEAN_CAGE_NAME: 1, BALKAN_FIGHTING_NAME: 1, AMAZON_COMBAT_NAME: 1,
+        AZTEC_FIGHTING_NAME: 4, NILE_COMBAT_NAME: 4, SAHEL_FIGHTING_NAME: 4,
+        CRESCENT_COMBAT_NAME: 1, INDUS_WARRIORS_NAME: 1, MEKONG_CIRCUIT_NAME: 1,
+    },
+    "brazilian": {
+        IRON_CIRCLE_NAME: 1, PRAIRIE_COMBAT_NAME: 1, CELTIC_WARRIORS_NAME: 4,
+        MEDITERRANEAN_CAGE_NAME: 6, BALKAN_FIGHTING_NAME: 1, AMAZON_COMBAT_NAME: 8,
+        AZTEC_FIGHTING_NAME: 4, NILE_COMBAT_NAME: 4, SAHEL_FIGHTING_NAME: 4,
+        CRESCENT_COMBAT_NAME: 1, INDUS_WARRIORS_NAME: 1, MEKONG_CIRCUIT_NAME: 1,
+    },
+    "muay_thai": {
+        IRON_CIRCLE_NAME: 1, PRAIRIE_COMBAT_NAME: 1, CELTIC_WARRIORS_NAME: 1,
+        MEDITERRANEAN_CAGE_NAME: 1, BALKAN_FIGHTING_NAME: 1, AMAZON_COMBAT_NAME: 1,
+        AZTEC_FIGHTING_NAME: 1, NILE_COMBAT_NAME: 1, SAHEL_FIGHTING_NAME: 1,
+        CRESCENT_COMBAT_NAME: 1, INDUS_WARRIORS_NAME: 2, MEKONG_CIRCUIT_NAME: 10,
+    },
+    "sea_mixed": {
+        IRON_CIRCLE_NAME: 1, PRAIRIE_COMBAT_NAME: 1, CELTIC_WARRIORS_NAME: 1,
+        MEDITERRANEAN_CAGE_NAME: 1, BALKAN_FIGHTING_NAME: 1, AMAZON_COMBAT_NAME: 1,
+        AZTEC_FIGHTING_NAME: 1, NILE_COMBAT_NAME: 1, SAHEL_FIGHTING_NAME: 1,
+        CRESCENT_COMBAT_NAME: 1, INDUS_WARRIORS_NAME: 6, MEKONG_CIRCUIT_NAME: 8,
+    },
+}
+
+_DEFAULT_REGIONAL_ORG_WEIGHTS: dict[str, float] = {org: 1.0 / len(REGIONAL_ORG_NAMES) for org in REGIONAL_ORG_NAMES}
+"""Uniform fallback for templates not in TEMPLATE_REGIONAL_ORG_WEIGHTS
+(crossover/lateral fighters) -- same rationale as the mid-major/top-tier
+defaults."""
+
 
 def assign_org(fighter: "Fighter") -> str:
     """Weighted-random TOP-TIER org assignment for a fighter entering tier4
@@ -337,8 +556,44 @@ def assign_org(fighter: "Fighter") -> str:
 def assign_midmajor_org(fighter: "Fighter") -> str:
     """Weighted-random MID-MAJOR org assignment for a fighter entering tier2
     (generation, promotion from tier1, or demotion from tier3). Mutates
-    fighter.org and returns the assigned name. Does NOT set org_start_day."""
+    fighter.org and returns the assigned name. Does NOT set org_start_day.
+
+    Session B2: unlike tier2->tier3->tier4 (which has an org-less tier3 gap
+    requiring a persisted midmajor_feed_org field, see capture_midmajor_feed),
+    tier1->tier2 is a DIRECT adjacent-tier promotion -- fighter.org still
+    holds the REGIONAL org name at the exact moment this function is called
+    for a promoting tier1 fighter, so no new Fighter field is needed. If
+    fighter.org currently names a recognized regional org, its own
+    primary/secondary_feeds_to REPLACES the generic template-based weights
+    (same FEED_PRIMARY_PROB/FEED_SECONDARY_PROB split as the tier4 case).
+    Falls through to template weighting for every other caller (tier2
+    generation, tier3->tier2 demotion where fighter.org is already "", or a
+    regional org name that somehow isn't recognized).
+    """
+    current_org = fighter.org
+    if current_org in REGIONAL_ORGS:
+        feed_org = REGIONAL_ORGS[current_org]
+        remaining = [o for o in MIDMAJOR_ORG_NAMES if o not in (feed_org.primary_feeds_to, feed_org.secondary_feeds_to)]
+        residual = max(0.0, 1.0 - FEED_PRIMARY_PROB - FEED_SECONDARY_PROB)
+        names = [feed_org.primary_feeds_to, feed_org.secondary_feeds_to] + remaining
+        probs = [FEED_PRIMARY_PROB, FEED_SECONDARY_PROB] + ([residual / len(remaining)] * len(remaining) if remaining else [])
+        org = random.choices(names, weights=probs, k=1)[0]
+        fighter.org = org
+        return org
+
     weights = TEMPLATE_MIDMAJOR_ORG_WEIGHTS.get(fighter.template, _DEFAULT_MIDMAJOR_ORG_WEIGHTS)
+    names   = list(weights.keys())
+    probs   = list(weights.values())
+    org     = random.choices(names, weights=probs, k=1)[0]
+    fighter.org = org
+    return org
+
+
+def assign_regional_org(fighter: "Fighter") -> str:
+    """Weighted-random REGIONAL org assignment for a fighter entering tier1
+    (generation, promotion from tier0, or demotion from tier2). Mutates
+    fighter.org and returns the assigned name. Does NOT set org_start_day."""
+    weights = TEMPLATE_REGIONAL_ORG_WEIGHTS.get(fighter.template, _DEFAULT_REGIONAL_ORG_WEIGHTS)
     names   = list(weights.keys())
     probs   = list(weights.values())
     org     = random.choices(names, weights=probs, k=1)[0]

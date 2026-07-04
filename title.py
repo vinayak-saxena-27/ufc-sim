@@ -151,7 +151,7 @@ def fights_until_next_title_fight(weight_class: str, tier_key: str, org: str = "
     Apex-poach mid-title-run refusal case -- there's no separate per-fighter
     schedule anywhere in this codebase, just this pool-level countdown, so
     that's what "imminent title defense" means here."""
-    key = (weight_class, tier_key, org if tier_key in ("tier2", "tier4") else "")
+    key = (weight_class, tier_key, org if tier_key in ("tier1", "tier2", "tier4") else "")
     return TITLE_FIGHT_INTERVAL - _fight_counters.get(key, 0)
 
 
@@ -319,11 +319,11 @@ def maybe_run_title_fight(
 
     Call once per regular fight using fighter A's weight_class and tier (captured
     before tier transitions, so the counter reflects where the fight actually
-    took place). For tier4 and tier2, callers must also pass top_tier_org =
-    fighter A's Fighter.org (top-tier org name, or one of the eight mid-major
-    org names -- Session B1) -- each org now runs its own independent title-
-    fight cadence and belt. Non-tier2/tier4 callers omit it (default "" = the
-    pre-existing behavior, unchanged).
+    took place). For tier1/tier2/tier4, callers must also pass top_tier_org =
+    fighter A's Fighter.org (top-tier org name, one of the eight mid-major org
+    names, or one of the twelve regional org names -- Sessions B1/B2) -- each
+    org now runs its own independent title-fight cadence and belt. Every
+    other tier omits it (default "" = the pre-existing behavior, unchanged).
 
     `org` (unrelated parameter, pre-existing) is just the FightResult.org tag
     ("league"/"campaign"/etc.) recorded on the simulated fight -- NOT the same
@@ -344,7 +344,7 @@ def maybe_run_title_fight(
     if tier_key == "tier4" and top_tier_org == THE_LEAGUE_NAME:
         return False   # The League's title comes from playoffs, not this path
 
-    reg_org = top_tier_org if tier_key in ("tier2", "tier4") else ""
+    reg_org = top_tier_org if tier_key in ("tier1", "tier2", "tier4") else ""
     key = (weight_class, tier_key, reg_org)
     _fight_counters[key] = _fight_counters.get(key, 0) + 1
     if _fight_counters[key] < TITLE_FIGHT_INTERVAL:

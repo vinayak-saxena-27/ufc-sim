@@ -171,7 +171,11 @@ def generate_tier_fighter(
     # tier2/tier4 fighters would sit org-less until natural promotions/
     # demotions eventually replace them. Local import avoids a tiers.py <->
     # orgs.org_registry import-order dependency at module load.
-    if tier_key == "tier2":
+    if tier_key == "tier1":
+        from orgs.org_registry import assign_regional_org
+        assign_regional_org(fighter)
+        fighter.org_start_day = 0
+    elif tier_key == "tier2":
         from orgs.org_registry import assign_midmajor_org
         assign_midmajor_org(fighter)
         fighter.org_start_day = 0
