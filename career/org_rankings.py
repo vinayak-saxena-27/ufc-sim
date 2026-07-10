@@ -71,6 +71,26 @@ def get_org_rankings(weight_class: str, org: str) -> list[RankingEntry]:
     return _org_rankings_by_wc_org.get((weight_class, org), [])
 
 
+def drop_from_org_rankings_cache(fighter_id: str, weight_class: str, org: str) -> None:
+    """
+    Evict a fighter from one (weight_class, org) pair's CACHED ranking list --
+    mirrors rankings.drop_from_rankings_cache, same rationale: RankingEntry
+    holds a live Fighter reference, and this cache only refreshes every
+    RANKINGS_UPDATE_INTERVAL fights, so a fighter who is demoted out of tier4
+    or fully removed (cut/retired) between recomputes would otherwise keep
+    appearing in their old org's roster until the next scheduled update.
+    No-op if `org` is empty/unrecognized or the fighter wasn't cached there.
+    """
+    key = (weight_class, org)
+    if key in _org_rankings_by_wc_org:
+        remaining = [e for e in _org_rankings_by_wc_org[key] if e.fighter.fighter_id != fighter_id]
+        for i, e in enumerate(remaining):
+            e.rank = i + 1
+        _org_rankings_by_wc_org[key] = remaining
+    if org in _org_ranked_ids:
+        _org_ranked_ids[org].discard(fighter_id)
+
+
 def get_org_ranked_ids(org: str) -> set[str]:
     """Fighter_ids currently ranked within `org` (any weight class)."""
     return _org_ranked_ids.get(org, set())

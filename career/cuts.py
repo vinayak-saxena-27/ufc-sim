@@ -41,6 +41,8 @@ from career.labels import (
     PROSPECT, GATEKEEPER, JOURNEYMAN, WASHED, CONTENDER, CHAMPION, LEGEND,
     LABEL_UPDATE_INTERVAL, get_champion_id, vacate_title,
 )
+from career.rankings import drop_from_rankings_cache
+from career.org_rankings import drop_from_org_rankings_cache
 
 
 # ── Risk-tier thresholds ──────────────────────────────────────────────────────
@@ -183,6 +185,11 @@ def execute_removal(
 
     Actions:
       - Remove fighter from pools[wc][tier] via identity comparison.
+      - Evict fighter from the Elite + per-org rankings caches (no-op if not
+        tier4/unranked -- see rankings.drop_from_rankings_cache). Without this,
+        a fighter cut or retired mid-cycle keeps showing up in /state's
+        rankings output until the next scheduled update_rankings() recompute,
+        now pointing at a fighter_id absent from all_fighters entirely.
       - Vacate title if fighter currently holds the belt at their tier+division.
       - Add fighter_id to _removed_fighter_ids (stale-reference guard).
       - Append CutRecord to _cut_log.
@@ -194,6 +201,10 @@ def execute_removal(
 
     pool = pools.get(wc, {}).get(tier, [])
     pool[:] = [f for f in pool if f is not fighter]
+
+    drop_from_rankings_cache(fighter.fighter_id, wc)
+    if tier == "tier4" and fighter.org:
+        drop_from_org_rankings_cache(fighter.fighter_id, wc, fighter.org)
 
     title_vacated = False
     _org = fighter.org if tier in ("tier1", "tier2", "tier4") else ""

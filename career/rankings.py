@@ -105,6 +105,15 @@ _HYPE_NORM: float = 50.0
 """Hype normalizer. Typical Elite hype ~15-60; value >50 gives hype_comp >1.0 before
 capping at 1.0. With W_HYPE=0.05 the max tiebreaker contribution is 0.05 pts."""
 
+RANKINGS_MIN_WINS: int = 1
+"""Minimum tier4 wins (in the fighter's current weight class) required to appear
+in the ranked list at all. Without this, a fighter with n>=1 tier4 fights and
+ZERO wins still passed the old `n == 0` check and could occupy a ranked slot
+whenever the qualifying pool was smaller than RANKINGS_SIZE (e.g. early in a
+run, or at small population scale) -- their win-rate and quality components are
+both 0.0, so they contributed nothing but noise. A winless fighter has no
+claim to a ranked position regardless of how thin the pool is."""
+
 _W_WIN_RATE: float = 0.55
 _W_QUALITY:  float = 0.40
 _W_HYPE:     float = 0.05
@@ -156,11 +165,11 @@ def _score_fighter(
     fighter: Fighter,
     ranked_ids_snapshot: set[str],
     name_to_id: dict[str, str],
-) -> tuple[float, float, float, float, int, int]:
+) -> tuple[float, float, float, float, int, int, int]:
     """
     Compute ranking score for one fighter.
     Returns (total_score, wr_component, quality_component, hype_component,
-             n_elite_fights, n_ranked_wins).
+             n_elite_fights, n_ranked_wins, n_wins).
     """
     # Only count tier4 fights from the fighter's CURRENT weight class -- a fighter
     # who moved divisions shouldn't have their old-division history count toward
@@ -174,11 +183,13 @@ def _score_fighter(
     n = len(tier4_fights)
 
     if n == 0:
-        return (0.0, 0.0, 0.0, 0.0, 0, 0)
+        return (0.0, 0.0, 0.0, 0.0, 0, 0, 0)
 
     conf     = _confidence(n)
     rec_wr   = _recency_weighted_win_rate(tier4_fights)
     wr_comp  = conf * rec_wr
+
+    n_wins = sum(1 for r in tier4_fights if r.outcome == "win")
 
     ranked_wins = sum(
         1 for r in tier4_fights
@@ -190,7 +201,7 @@ def _score_fighter(
     hype_comp = min(1.0, max(0.0, fighter.hype / _HYPE_NORM))
 
     score = _W_WIN_RATE * wr_comp + _W_QUALITY * qual_comp + _W_HYPE * hype_comp
-    return (score, wr_comp, qual_comp, hype_comp, n, ranked_wins)
+    return (score, wr_comp, qual_comp, hype_comp, n, ranked_wins, n_wins)
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -208,7 +219,7 @@ def compute_division_rankings(
     """
     name_to_id = {f.name: f.fighter_id for f in elite_fighters}
 
-    scored: list[tuple[float, float, float, float, int, int, Fighter]] = []
+    scored: list[tuple[float, float, float, float, int, int, int, Fighter]] = []
     for f in elite_fighters:
         result = _score_fighter(f, ranked_ids_snapshot, name_to_id)
         scored.append((*result, f))
@@ -216,8 +227,8 @@ def compute_division_rankings(
     scored.sort(key=lambda x: x[0], reverse=True)
 
     ranked: list[RankingEntry] = []
-    for score, wr_c, q_c, h_c, n, rw, f in scored:
-        if n == 0:
+    for score, wr_c, q_c, h_c, n, rw, wins, f in scored:
+        if n == 0 or wins < RANKINGS_MIN_WINS:
             continue
         if len(ranked) >= RANKINGS_SIZE:
             break
@@ -293,9 +304,10 @@ def drop_from_rankings_cache(fighter_id: str, weight_class: str) -> None:
     out of scope here.
     """
     if weight_class in _rankings_by_wc:
-        _rankings_by_wc[weight_class] = [
-            e for e in _rankings_by_wc[weight_class] if e.fighter.fighter_id != fighter_id
-        ]
+        remaining = [e for e in _rankings_by_wc[weight_class] if e.fighter.fighter_id != fighter_id]
+        for i, e in enumerate(remaining):
+            e.rank = i + 1
+        _rankings_by_wc[weight_class] = remaining
     _ranked_ids.discard(fighter_id)
 
 
