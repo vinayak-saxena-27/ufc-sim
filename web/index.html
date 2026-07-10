@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>UFC Career Sim</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div id="page">
+
+  <header id="masthead">
+    <h1>UFC Career Sim</h1>
+    <div id="controls-bar">
+      <span id="controls-links">
+        <a href="#" id="btn-init">Initialize simulation</a>
+        <span class="sep">·</span>
+        <a href="#" id="btn-week">Advance 1 week</a>
+        <span class="sep">·</span>
+        <a href="#" id="btn-month">Advance 1 month</a>
+      </span>
+      <span class="controls-inputs">
+        (scale <input type="number" id="in-scale" value="1.0" step="0.1" min="0.1">,
+        seed <input type="number" id="in-seed" value="42" step="1">)
+      </span>
+      <span id="day-display"></span>
+    </div>
+    <div id="status-line"></div>
+  </header>
+
+  <p class="lead">
+    An encyclopedic snapshot of a simulated mixed martial arts career ecosystem —
+    fighters, academies, and the organizations that promote them, spanning the
+    Regional, Mid-major, and Top-tier ranks. Use <em>Initialize simulation</em> to
+    seed a new population, then advance the clock week by week or month by month
+    to watch careers, rankings, and titles evolve.
+  </p>
+
+  <nav id="toc">
+    <div id="toc-title">Contents</div>
+    <ol>
+      <li><a href="#rankings">Elite Rankings</a></li>
+      <li><a href="#titles">Titles</a></li>
+      <li><a href="#organizations">Organizations</a></li>
+      <li><a href="#academies">Academies</a></li>
+    </ol>
+  </nav>
+
+  <main id="content">
+    <p class="empty-note">No simulation loaded yet — click <strong>Initialize simulation</strong> above to begin.</p>
+  </main>
+
+  <footer id="page-footer">
+    <p>UFC Career Sim — a procedurally generated MMA career simulation.</p>
+  </footer>
+
+</div>
+
+<div id="modal-overlay" class="hidden">
+  <div id="modal-box">
+    <a href="#" id="modal-close" title="Close">&times;</a>
+    <div id="modal-content"></div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

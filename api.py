@@ -26,7 +26,10 @@ from career.rankings import RankingEntry, get_rankings
 from career.org_rankings import get_org_rankings
 from career.labels import get_champion_id
 from career.academy_reputation import ACADEMY_REPUTATION
-from orgs.org_registry import ORG_NAMES, MIDMAJOR_ORG_NAMES, REGIONAL_ORG_NAMES
+from orgs.org_registry import (
+    ORG_NAMES, MIDMAJOR_ORG_NAMES, REGIONAL_ORG_NAMES,
+    ORGS, MIDMAJOR_ORGS, REGIONAL_ORGS, Org,
+)
 
 app = FastAPI(title="UFC Sim API")
 app.add_middleware(
@@ -118,6 +121,22 @@ def _serialize_fighter(f: Fighter) -> dict:
     }
 
 
+_TIER_GROUP_LABELS: dict[str, str] = {"tier4": "Top-tier", "tier2": "Mid-major", "tier1": "Regional"}
+
+
+def _serialize_org(org: Org) -> dict:
+    return {
+        "name": org.name,
+        "tier_group": _TIER_GROUP_LABELS.get(org.tier, org.tier),
+        "format": org.format,
+        "scoring": org.scoring,
+        "prestige": org.prestige,
+        "primary_feed_from": org.primary_feed_from,
+        "primary_feeds_to": org.primary_feeds_to,
+        "secondary_feeds_to": org.secondary_feeds_to,
+    }
+
+
 def _serialize_ranking_entry(e: RankingEntry) -> dict:
     return {
         "rank": e.rank,
@@ -164,6 +183,11 @@ def _build_snapshot() -> dict:
                 "champion_name": champ.name if champ else None,
             }
 
+    organizations = {
+        org.name: _serialize_org(org)
+        for org in list(ORGS.values()) + list(MIDMAJOR_ORGS.values()) + list(REGIONAL_ORGS.values())
+    }
+
     return {
         "current_day": state.current_day,
         # Display-cased identifiers, per the frontend contract; dict keys above
@@ -176,6 +200,7 @@ def _build_snapshot() -> dict:
         "org_rosters": org_rosters,
         "titles": titles,
         "academy_reputations": dict(ACADEMY_REPUTATION),
+        "organizations": organizations,
     }
 
 
@@ -203,3 +228,15 @@ def get_state() -> dict:
     if not state.initialized:
         raise HTTPException(status_code=400, detail="Simulation not initialized -- call /init first.")
     return _build_snapshot()
+
+
+# ── Static frontend ──────────────────────────────────────────────────────────────
+# Mounted last so it never shadows the explicit routes above (Starlette matches
+# routes in registration order; a Mount only catches what nothing else claimed).
+# Serves web/index.html at /ui/ -- same-origin as the API, so the frontend needs
+# no CORS handling despite the permissive CORSMiddleware above.
+
+from pathlib import Path
+from fastapi.staticfiles import StaticFiles
+
+app.mount("/ui", StaticFiles(directory=Path(__file__).parent / "web", html=True), name="ui")
