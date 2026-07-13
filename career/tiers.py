@@ -91,7 +91,14 @@ TIER_POPULATION: dict[str, int] = {
     "tier1":  70,   # Regional        — large, somewhat smaller
     "tier2":  35,   # Mid-major       — medium
     "tier3":  25,   # Top-org btm-15  — small
-    "tier4":  15,   # Top-org elite   — very small; hard to earn, quick to lose
+    "tier4":  20,   # Top-org elite   — raised from 15 (2026-07-13): a 5000-fight sim never
+                    # calls run_replenishment, so the Elite pool is a closed system that only
+                    # shrinks; at 15 it collapses to 1-4 fighters/division by ~20% into a long
+                    # run and stays there, starving title-fight challenger selection (25%
+                    # fallback rate vs a 20% bound). Swept 20/25/30 at seeds 42+7 against
+                    # verify_title_selection.py's fallback-rate check; 20 is the minimum tested
+                    # value that clears the bound at both seeds (4.8%/9.5%) without regressing
+                    # verify_elite_matchmaking/verify_migration/smoke_test. Not swept below 20.
 }
 
 
