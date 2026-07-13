@@ -244,12 +244,13 @@ def _run_one_bout(
     # Apply tier transitions, label updates,
     # retirement (checked first), then cut (skips already-retired fighters).
     # Age advancement is now global (advance_all_ages below) -- not per-fight.
-    transitions: dict[str, str] = {}
+    transitions: dict[str, tuple[str, str]] = {}   # name -> (old_tier, new_tier)
     fighters_to_remove: list = []
     for fighter in (winner, loser):
+        old_tier = fighter.tier
         new_tier = apply_tier_transitions(fighter, pools)
         if new_tier:
-            transitions[fighter.name] = new_tier
+            transitions[fighter.name] = (old_tier, new_tier)
         maybe_update_labels(fighter)
         removed = maybe_evaluate_retirement(fighter, pools, fight_num=i + 1)
         if not removed:
@@ -405,10 +406,9 @@ def _run_one_bout(
         )
         if is_upset:
             body.append("   [UPSET]", style="bold yellow")
-        for name, new_tier in transitions.items():
+        for name, (old_tier, new_tier) in transitions.items():
             tier_label = _TIER_SHORT.get(new_tier, new_tier)
-            old_idx = TIER_LEVELS.index(new_tier) - 1
-            direction = "PROMOTED to" if TIER_LEVELS.index(new_tier) > old_idx else "DEMOTED to"
+            direction = "PROMOTED to" if TIER_LEVELS.index(new_tier) > TIER_LEVELS.index(old_tier) else "DEMOTED to"
             body.append(f"\n  [{direction} {tier_label}]", style="bold magenta")
 
         console.print(Panel(body, title=f"[dim]Bout {i + 1} of {n_fights} | Day {current_day}[/dim]", expand=False))

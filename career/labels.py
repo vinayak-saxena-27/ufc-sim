@@ -124,7 +124,7 @@ def reset_title_registry() -> None:
     _title_defenses.clear()
 
 
-def award_title(winner: Fighter) -> None:
+def award_title(winner: Fighter, *, weight_class: str | None = None) -> None:
     """
     Record winner as the current champion at their tier+division(+org).
 
@@ -135,12 +135,19 @@ def award_title(winner: Fighter) -> None:
     no ambiguity to resolve at the call site the way there is for the id-only
     accessors below (get_champion_id/vacate_title/get_title_defenses).
 
+    weight_class: explicit division override for the rare case where the belt
+    being won is NOT the winner's own current division -- a win-and-vacate
+    campaigner's Fighter.weight_class stays their HOME division for the whole
+    campaign (weight_transfers.py), so deriving the key from the Fighter
+    object would re-award their home belt instead of the campaign one.
+    Omit everywhere else (defaults to winner.weight_class).
+
     Also updates the defense counter: if winner already held this exact belt,
     this is a successful defense (increment); otherwise it's a new reign
     (different winner, or the belt was vacant) and the counter resets to 0.
     """
     org = winner.org if winner.tier in ("tier1", "tier2", "tier4") else ""
-    key = (winner.weight_class, winner.tier, org)
+    key = (weight_class or winner.weight_class, winner.tier, org)
     if _title_holders.get(key) == winner.fighter_id:
         _title_defenses[key] = _title_defenses.get(key, 0) + 1
     else:

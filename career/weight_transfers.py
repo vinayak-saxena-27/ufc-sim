@@ -354,7 +354,13 @@ def _advance_one_campaign(
     if winner is fighter:
         fighter.campaign_wins += 1
         if fighter.campaign_wins >= _CAMPAIGN_WINS_TO_TITLE:
-            award_title(fighter)
+            # The belt won here is the CAMPAIGN division's, but the campaigner's
+            # Fighter.weight_class stays their home division for the whole
+            # campaign -- award_title must be told the division explicitly, or
+            # it would re-award the HOME belt (spuriously bumping the home
+            # defense counter) and leave this vacate_title stripping a belt the
+            # campaigner never held.
+            award_title(fighter, weight_class=campaign_wc)
             print(f"[MOVE] {fighter.name} becomes DUAL-CHAMPION at {campaign_wc}!")
             vacate_title(campaign_wc, tier, fighter.org if tier in ("tier1", "tier2", "tier4") else "")
             _end_campaign(fighter, pools, fight_num, sim_day,

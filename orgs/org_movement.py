@@ -137,9 +137,21 @@ class OrgMoveRecord:
 
 _move_log: list[OrgMoveRecord] = []
 
+# fighter_id -> len(fight_history) at the last time that fighter was actually
+# evaluated by run_org_movement_sweep. The sweep runs once per MAIN-LOOP
+# iteration, but a fighter's fight count only changes when THEY fight -- so a
+# bare `n % LABEL_UPDATE_INTERVAL == 0` gate re-fires on every iteration for
+# the whole stretch between their 5th and 6th fights (often dozens of
+# iterations), compounding the documented per-evaluation-cycle probabilities
+# (POACH_BASE_PROB_*, AGING_LEGEND_BASE_PROB, ...) into near-certainty. This
+# marker makes each milestone evaluate exactly once, restoring the "same
+# cadence as labels/cuts" contract the constants were tuned against.
+_last_evaluated_at: dict[str, int] = {}
+
 
 def reset_org_movement_log() -> None:
     _move_log.clear()
+    _last_evaluated_at.clear()
 
 
 def get_org_movement_log() -> list[OrgMoveRecord]:
@@ -354,6 +366,9 @@ def run_org_movement_sweep(
         n = len(fighter.fight_history)
         if n == 0 or n % LABEL_UPDATE_INTERVAL != 0:
             continue
+        if _last_evaluated_at.get(fighter.fighter_id) == n:
+            continue   # already evaluated at this fight-count milestone
+        _last_evaluated_at[fighter.fighter_id] = n
 
         if fighter.org == APEX_FC_NAME:
             _maybe_leave_apex(fighter, fight_num)
