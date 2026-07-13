@@ -23,8 +23,15 @@ const ATTR_ORDER = ["wrestling", "bjj", "clinch", "boxing", "kickboxing", "power
 
 let SNAPSHOT = null;
 let fightersById = new Map();
+let fightersByName = new Map();
 
 // ── Small helpers ────────────────────────────────────────────────────────────
+
+function formatSimDay(day) {
+  const year = Math.floor(day / 365) + 1;
+  const month = Math.floor((day % 365) / 30) + 1;
+  return `Y${year} M${month}`;
+}
 
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({
@@ -96,6 +103,7 @@ async function fetchState() {
   if (!res.ok) throw new Error(`GET /state failed: ${res.status}`);
   SNAPSHOT = await res.json();
   fightersById = new Map(SNAPSHOT.fighters.map(f => [f.fighter_id, f]));
+  fightersByName = new Map(SNAPSHOT.fighters.map(f => [f.name, f]));
   render();
 }
 
@@ -143,14 +151,17 @@ async function doAdvance(period) {
 // ── Rendering ────────────────────────────────────────────────────────────────
 
 function render() {
-  document.getElementById("day-display").textContent = `Day ${SNAPSHOT.current_day}`;
+  document.getElementById("day-display").textContent =
+    `${formatSimDay(SNAPSHOT.current_day)} · ${SNAPSHOT.fighters.length} fighters`;
   const parts = [
     renderRankingsSection(),
     renderTitlesSection(),
     renderOrganizationsSection(),
     renderAcademiesSection(),
+    renderFightersSection(),
   ];
   document.getElementById("content").innerHTML = parts.join("\n");
+  renderFightersTable();
 }
 
 function rankingRowsHtml(entries) {
@@ -275,7 +286,132 @@ function renderAcademiesSection() {
   </section>`;
 }
 
+// ── All Fighters table (sortable / filterable / searchable) ─────────────────
+
+let fightersSortKey = "overall";
+let fightersSortDir = "desc";
+let fightersSearch = "";
+let fightersWcFilter = "";
+let fightersTierFilter = "";
+
+const FIGHTERS_MAX_ROWS = 200;
+
+const FIGHTERS_SORT_ACCESSORS = {
+  name:    f => f.name.toLowerCase(),
+  overall: f => f.overall,
+  hype:    f => f.hype,
+  wins:    f => f.record.wins,
+  age:     f => f.age,
+};
+
+function setFightersSort(key) {
+  if (fightersSortKey === key) {
+    fightersSortDir = fightersSortDir === "desc" ? "asc" : "desc";
+  } else {
+    fightersSortKey = key;
+    fightersSortDir = "desc";
+  }
+  renderFightersTable();
+}
+
+function onFightersSearchInput(value) {
+  fightersSearch = value;
+  renderFightersTable();
+}
+
+function onFightersFilterChange() {
+  fightersWcFilter = document.getElementById("fighters-wc-filter").value;
+  fightersTierFilter = document.getElementById("fighters-tier-filter").value;
+  renderFightersTable();
+}
+
+function fightersFilteredSorted() {
+  const q = fightersSearch.trim().toLowerCase();
+  let list = SNAPSHOT.fighters.filter(f => {
+    if (fightersWcFilter && f.weight_class !== fightersWcFilter) return false;
+    if (fightersTierFilter && f.tier !== fightersTierFilter) return false;
+    if (q && !f.name.toLowerCase().includes(q)) return false;
+    return true;
+  });
+  const keyFn = FIGHTERS_SORT_ACCESSORS[fightersSortKey] || FIGHTERS_SORT_ACCESSORS.overall;
+  list = list.slice().sort((a, b) => {
+    const av = keyFn(a), bv = keyFn(b);
+    const cmp = typeof av === "string" ? av.localeCompare(bv) : av - bv;
+    return fightersSortDir === "desc" ? -cmp : cmp;
+  });
+  return list;
+}
+
+function fightersSortIndicator(key) {
+  if (fightersSortKey !== key) return "";
+  return fightersSortDir === "desc" ? " ↓" : " ↑";
+}
+
+function fightersColHeaderHtml(key, label) {
+  return `<th class="sortable-col" onclick="setFightersSort('${key}')">${label}${fightersSortIndicator(key)}</th>`;
+}
+
+function renderFightersTable() {
+  const list = fightersFilteredSorted();
+  const total = list.length;
+  const rows = list.slice(0, FIGHTERS_MAX_ROWS).map(f => `<tr>
+      <td>${fighterLink(f.fighter_id, f.name)}</td>
+      <td>${humanize(f.weight_class)}</td>
+      <td>${tierLabel(f.tier)}</td>
+      <td>${orgLink(f.org)}</td>
+      <td class="num">${f.overall.toFixed(1)}</td>
+      <td class="num">${f.hype.toFixed(1)}</td>
+      <td class="num">${escapeHtml(f.record.str)}</td>
+      <td class="num">${f.age}</td>
+    </tr>`).join("\n");
+
+  const table = total
+    ? `<p class="muted">Showing ${Math.min(total, FIGHTERS_MAX_ROWS)} of ${total} matching fighters.</p>
+      <table class="wikitable">
+        <thead><tr>
+          ${fightersColHeaderHtml("name", "Name")}
+          <th>Weight Class</th>
+          <th>Tier</th>
+          <th>Org</th>
+          ${fightersColHeaderHtml("overall", "Overall")}
+          ${fightersColHeaderHtml("hype", "Hype")}
+          ${fightersColHeaderHtml("wins", "Record")}
+          ${fightersColHeaderHtml("age", "Age")}
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>`
+    : `<p class="empty-note">No fighters match the current filters.</p>`;
+
+  document.getElementById("fighters-table-container").innerHTML = table;
+}
+
+function renderFightersSection() {
+  const wcOptions = ['<option value="">All weight classes</option>']
+    .concat(weightClasses().map(wc => `<option value="${wc}">${humanize(wc)}</option>`))
+    .join("");
+  const tierOptions = ['<option value="">All tiers</option>']
+    .concat(Object.keys(TIER_LABELS).map(t => `<option value="${t}">${TIER_LABELS[t]}</option>`))
+    .join("");
+
+  return `<section id="fighters" class="section-block">
+    <h2>All Fighters</h2>
+    <p>The full roster, searchable and sortable — click a column heading to sort by it.</p>
+    <p class="fighters-controls">
+      <input type="text" id="fighters-search" placeholder="Search by name…" oninput="onFightersSearchInput(this.value)">
+      <select id="fighters-wc-filter" onchange="onFightersFilterChange()">${wcOptions}</select>
+      <select id="fighters-tier-filter" onchange="onFightersFilterChange()">${tierOptions}</select>
+    </p>
+    <div id="fighters-table-container"></div>
+  </section>`;
+}
+
 // ── Fighter modal ────────────────────────────────────────────────────────────
+
+function opponentCellHtml(opponentName) {
+  const opp = fightersByName.get(opponentName);
+  if (!opp) return escapeHtml(opponentName);
+  return `<a href="#" onclick="navigateModalTo('${opp.fighter_id}'); return false;">${escapeHtml(opponentName)}</a>`;
+}
 
 function renderFighterModal(f) {
   const attrRows = ATTR_ORDER.map(k => attrBarHtml(k, f.attributes[k])).join("\n");
@@ -283,8 +419,8 @@ function renderFighterModal(f) {
   const history = [...f.fight_history].reverse();
   const historyRows = history.length
     ? history.map(r => `<tr>
-          <td class="num">${r.sim_day}</td>
-          <td>${escapeHtml(r.opponent_name)}</td>
+          <td class="num">${formatSimDay(r.sim_day)}</td>
+          <td>${opponentCellHtml(r.opponent_name)}</td>
           <td>${humanize(r.outcome)}</td>
           <td>${humanize(r.method)}</td>
           <td>${r.org ? escapeHtml(r.org) : "—"}</td>
@@ -293,7 +429,11 @@ function renderFighterModal(f) {
         </tr>`).join("\n")
     : `<tr><td colspan="7" class="empty-note">No fights on record.</td></tr>`;
 
-  return `<h1>${escapeHtml(f.name)}</h1>
+  const backLink = modalStack.length
+    ? `<p class="modal-back"><a href="#" onclick="modalGoBack(); return false;">← Back</a></p>`
+    : "";
+
+  return `${backLink}<h1>${escapeHtml(f.name)}</h1>
     <p class="muted">${labelsText(f.labels)}</p>
     <table class="infobox">
       <caption>${escapeHtml(f.name)}</caption>
@@ -380,6 +520,16 @@ function renderOrgModal(org) {
 }
 
 // ── Modal plumbing (hash-routed, so :visited coloring works natively) ───────
+//
+// Fighter-modal navigation stack: clicking an opponent link inside the fight
+// history pushes the currently-displayed fighter onto modalStack and swaps in
+// the opponent, without touching location.hash (so hash-based :visited/back-
+// button semantics stay reserved for the original rankings/org-table links).
+// A "← Back" link pops the stack. Reset whenever a fresh modal is opened via
+// hash navigation or the modal is closed.
+
+let modalStack = [];
+let currentModalFighterId = null;
 
 function openModal(html) {
   document.getElementById("modal-content").innerHTML = html;
@@ -389,6 +539,24 @@ function openModal(html) {
 
 function closeModal() {
   document.getElementById("modal-overlay").classList.add("hidden");
+  modalStack = [];
+  currentModalFighterId = null;
+}
+
+function fighterModalHtmlById(id) {
+  currentModalFighterId = id;
+  const f = fightersById.get(id);
+  return f ? renderFighterModal(f) : `<p class="empty-note">Fighter not found.</p>`;
+}
+
+function navigateModalTo(id) {
+  if (currentModalFighterId) modalStack.push(currentModalFighterId);
+  openModal(fighterModalHtmlById(id));
+}
+
+function modalGoBack() {
+  if (!modalStack.length) return;
+  openModal(fighterModalHtmlById(modalStack.pop()));
 }
 
 function checkModalFromHash() {
@@ -396,9 +564,11 @@ function checkModalFromHash() {
   if (!SNAPSHOT) { closeModal(); return; }
   if (h.startsWith("#fighter/")) {
     const id = decodeURIComponent(h.slice("#fighter/".length));
-    const f = fightersById.get(id);
-    openModal(f ? renderFighterModal(f) : `<p class="empty-note">Fighter not found.</p>`);
+    modalStack = [];
+    openModal(fighterModalHtmlById(id));
   } else if (h.startsWith("#org/")) {
+    modalStack = [];
+    currentModalFighterId = null;
     const name = decodeURIComponent(h.slice("#org/".length));
     const org = SNAPSHOT.organizations[name];
     openModal(org ? renderOrgModal(org) : `<p class="empty-note">Organization not found.</p>`);
