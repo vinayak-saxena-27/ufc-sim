@@ -6,8 +6,8 @@ from dataclasses import dataclass
 from career.fighter import Fighter
 from career.tiers import TIER_LEVELS
 from career.academy_reputation import get_effective_pipeline_strength
-from career.rankings import is_eligible_vs_ranked, get_ranked_ids, get_rankings, RANKINGS_SIZE
-from career.org_rankings import get_org_ranked_ids, get_org_rankings
+from career.rankings import is_eligible_vs_ranked, get_ranked_ids, get_rankings, RANKINGS_SIZE, drop_from_rankings_cache
+from career.org_rankings import get_org_ranked_ids, get_org_rankings, drop_from_org_rankings_cache
 from orgs.org_registry import assign_org, assign_midmajor_org, assign_regional_org, capture_midmajor_feed
 from sim_calendar import get_sim_day
 
@@ -454,6 +454,16 @@ def apply_tier_transitions(
         fighter.tier = TIER_LEVELS[idx - 1]
         pools[wc][fighter.tier].append(fighter)
         if was_tier4:
+            # Evict the now-stale Elite / org ranking entries immediately rather
+            # than waiting for the next periodic update_rankings() recompute (up
+            # to RANKINGS_UPDATE_INTERVAL fights away) -- RankingEntry.fighter is
+            # a live reference, so without this a demoted, org-less fighter keeps
+            # showing up in /state's elite_rankings (and their old org's roster)
+            # at their old rank/score. Must run BEFORE fighter.org is cleared
+            # below, since the org-rankings cache is keyed by org name.
+            drop_from_rankings_cache(fighter.fighter_id, wc)
+            if fighter.org:
+                drop_from_org_rankings_cache(fighter.fighter_id, wc, fighter.org)
             fighter.org = ""
             fighter.org_start_day = -1
             fighter.org_arrived_pre_ranked = False

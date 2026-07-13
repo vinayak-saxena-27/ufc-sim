@@ -196,6 +196,15 @@ fallback_records = [r for r in elite_records if r.override == "fallback"]
 fallback_pct = 100 * fallback_count / len(elite_records) if elite_records else 0
 # Fallback fires for thin rankings (early sim) or depleted pool (late sim).
 # Either case is legitimate; what matters is it's not the default path.
+#
+# 2026-07-13: this test never calls run_replenishment, so the Elite pool is a
+# closed system that only shrinks over a long run -- at TIER_POPULATION["tier4"]
+# =15 it collapsed to 1-4 fighters/division by ~20% into a 5000-fight run and
+# stayed there, which (combined with rankings.RANKINGS_MIN_WINS excluding
+# winless fighters) pushed fallback to ~25% against this 20% bound. Root-caused
+# via a population trace (see career/tiers.py's TIER_POPULATION comment) and
+# fixed by raising tier4's seed population to 20 -- swept 20/25/30 at seeds
+# 42+7, 20 was the minimum tested value clearing this bound at both.
 ok3 = fallback_pct <= 20.0
 result3 = _PASS if ok3 else _FAIL
 print(f"CHECK 3  Fallback rate is low  [{result3}]")

@@ -71,7 +71,7 @@ from career.cuts import is_removed
 from career.rankings import (
     RankingEntry,
     _confidence, _recency_weighted_win_rate,
-    _W_WIN_RATE, _W_QUALITY, _W_HYPE, _HYPE_NORM,
+    _W_WIN_RATE, _W_QUALITY, _W_HYPE, _HYPE_NORM, RANKINGS_MIN_WINS,
 )
 from orgs.org_registry import MIDMAJOR_ORG_NAMES, REGIONAL_ORG_NAMES
 from sim_calendar import days_since, _last_stamped_day
@@ -162,7 +162,7 @@ def _score_fighter_tier(
     ranked_ids_snapshot: set[str],
     name_to_id: dict[str, str],
     quality_norm: float,
-) -> tuple[float, float, float, float, int, int]:
+) -> tuple[float, float, float, float, int, int, int]:
     """Tier-generic sibling of rankings.py's _score_fighter -- identical
     formula, parameterized by tier_key/quality_norm instead of hardcoded
     to tier4. Same weight_class backward-compat handling (empty string =
@@ -173,11 +173,13 @@ def _score_fighter_tier(
     ]
     n = len(tier_fights)
     if n == 0:
-        return (0.0, 0.0, 0.0, 0.0, 0, 0)
+        return (0.0, 0.0, 0.0, 0.0, 0, 0, 0)
 
     conf    = _confidence(n)
     rec_wr  = _recency_weighted_win_rate(tier_fights)
     wr_comp = conf * rec_wr
+
+    n_wins = sum(1 for r in tier_fights if r.outcome == "win")
 
     ranked_wins = sum(
         1 for r in tier_fights
@@ -187,7 +189,7 @@ def _score_fighter_tier(
     hype_comp = min(1.0, max(0.0, fighter.hype / _HYPE_NORM))
 
     score = _W_WIN_RATE * wr_comp + _W_QUALITY * qual_comp + _W_HYPE * hype_comp
-    return (score, wr_comp, qual_comp, hype_comp, n, ranked_wins)
+    return (score, wr_comp, qual_comp, hype_comp, n, ranked_wins, n_wins)
 
 
 def compute_tier_rankings(
@@ -200,7 +202,7 @@ def compute_tier_rankings(
     """Tier-generic sibling of rankings.py's compute_division_rankings."""
     name_to_id = {f.name: f.fighter_id for f in fighters}
 
-    scored: list[tuple[float, float, float, float, int, int, Fighter]] = []
+    scored: list[tuple[float, float, float, float, int, int, int, Fighter]] = []
     for f in fighters:
         result = _score_fighter_tier(f, tier_key, ranked_ids_snapshot, name_to_id, quality_norm)
         scored.append((*result, f))
@@ -208,8 +210,8 @@ def compute_tier_rankings(
     scored.sort(key=lambda x: x[0], reverse=True)
 
     ranked: list[RankingEntry] = []
-    for score, wr_c, q_c, h_c, n, rw, f in scored:
-        if n == 0:
+    for score, wr_c, q_c, h_c, n, rw, wins, f in scored:
+        if n == 0 or wins < RANKINGS_MIN_WINS:
             continue
         if len(ranked) >= list_size:
             break
