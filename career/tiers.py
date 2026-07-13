@@ -90,15 +90,22 @@ TIER_POPULATION: dict[str, int] = {
     "tier0": 100,   # Amateur         — large base pool
     "tier1":  70,   # Regional        — large, somewhat smaller
     "tier2":  35,   # Mid-major       — medium
-    "tier3":  25,   # Top-org btm-15  — small
-    "tier4":  20,   # Top-org elite   — raised from 15 (2026-07-13): a 5000-fight sim never
-                    # calls run_replenishment, so the Elite pool is a closed system that only
-                    # shrinks; at 15 it collapses to 1-4 fighters/division by ~20% into a long
-                    # run and stays there, starving title-fight challenger selection (25%
-                    # fallback rate vs a 20% bound). Swept 20/25/30 at seeds 42+7 against
-                    # verify_title_selection.py's fallback-rate check; 20 is the minimum tested
-                    # value that clears the bound at both seeds (4.8%/9.5%) without regressing
-                    # verify_elite_matchmaking/verify_migration/smoke_test. Not swept below 20.
+    "tier3": 130,   # Top-org btm-15  — org-less feeder pool; raised from 25 (2026-07-13,
+                    # same session as tier4 below) by the same ~5.25x multiplier, since it
+                    # has the same "no organic academy inflow" structural problem tier4 does.
+    "tier4": 105,   # Top-org elite   — raised from 20 (2026-07-13): comparing to real UFC
+                    # density (~53 active fighters/weight class in ONE org) showed the combined
+                    # 3-org Elite pool was too shallow for RANKINGS_SIZE=15 to mean anything --
+                    # nearly the whole roster was ranked regardless of record. New total is the
+                    # sum of prestige-ratio-derived per-org targets (orgs/org_registry.py's
+                    # Apex FC=10.0 / Eastern GP=7.0 / The League=4.0, anchored at Apex=50 to
+                    # match real UFC scale): Apex 50 + Eastern GP 35 + The League 20 = 105.
+                    # Actual per-org depth is enforced by career/replenishment.py's
+                    # TIER4_ORG_FLOORS, not this total alone -- see that module for why (Apex
+                    # poaching is directional, so a combined floor let The League/Eastern GP
+                    # collapse even with a healthy total). Earlier note (raised 15->20 because
+                    # a 5000-fight sim without run_replenishment collapses to 1-4/division and
+                    # starves title-fight challenger selection) still applies at this new scale.
 }
 
 
@@ -115,6 +122,7 @@ def generate_tier_fighter(
     weight_class: str = "unknown",
     *,
     academy: Academy | None = None,
+    forced_org: str | None = None,
 ) -> Fighter:
     """
     Creates a fighter whose overall centers on the tier distribution and whose
@@ -127,6 +135,10 @@ def generate_tier_fighter(
     academy: if supplied (e.g. by replenishment.py for per-academy generation),
              that specific academy is used instead of a random pick. Existing
              callers omit this and get the original random-selection behavior.
+    forced_org: tier4 only. If supplied, assigns this org directly instead of
+             the weighted-random assign_org() -- used by replenishment.py's
+             per-org backstop to refill a SPECIFIC org's deficit rather than
+             letting generic template weighting (which skews Apex-heavy) decide.
     """
     tier = TIER_CONFIG[tier_key]
     cfg  = TEMPLATES[template_name]
@@ -187,8 +199,11 @@ def generate_tier_fighter(
         assign_midmajor_org(fighter)
         fighter.org_start_day = 0
     elif tier_key == "tier4":
-        from orgs.org_registry import assign_org
-        assign_org(fighter)
+        if forced_org is not None:
+            fighter.org = forced_org
+        else:
+            from orgs.org_registry import assign_org
+            assign_org(fighter)
         fighter.org_start_day = 0
     return fighter
 

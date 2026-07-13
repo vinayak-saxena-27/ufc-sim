@@ -80,7 +80,7 @@ from career.replenishment import (
     initialize_replenishment, run_replenishment,
     get_replenishment_history, get_backstop_log, get_event_log, get_total_generated,
     get_inflow_counts,
-    FLOOR_THRESHOLDS,
+    FLOOR_THRESHOLDS, TIER4_ORG_FLOORS,
 )
 
 console = Console()
@@ -760,9 +760,24 @@ def run(n_fights: int, scale: float, seed: int, debug: bool = False) -> None:
     console.print(ot)
     console.print()
 
+    # ── Top-tier org roster vs per-org Elite floor (2026-07-13 rescale) ──────
+    _TOPTIER_ORG_SHORT: dict[str, str] = {
+        APEX_FC_NAME: "Apex", THE_LEAGUE_NAME: "League", EASTERN_GP_NAME: "EGP",
+    }
+    console.print("[dim]  Top-tier org roster vs per-org Elite floor (TIER4_ORG_FLOORS):[/dim]")
+    for wc in WEIGHT_CLASSES:
+        parts = []
+        for org in ORG_NAMES:
+            n = sum(1 for f in pools[wc].get("tier4", []) if f.org == org)
+            floor = TIER4_ORG_FLOORS[org]
+            tag = "[red]" if n < floor else "[green]"
+            parts.append(f"{_TOPTIER_ORG_SHORT[org]} {tag}{n}[/{tag.strip('[]')}]/{floor}")
+        console.print(f"[dim]    {_WC_SHORT[wc]}: [/dim]" + "  ".join(parts))
+    console.print()
+
     # ── Apex FC roster cap check (Session B1, Part 3, deliverable d) ─────────
     console.print(
-        f"[dim]  Apex FC roster vs soft cap (MAX_APEX_ROSTER={MAX_APEX_ROSTER}):[/dim]"
+        f"[dim]  Apex FC roster vs soft poach cap (MAX_APEX_ROSTER={MAX_APEX_ROSTER}):[/dim]"
     )
     for wc in WEIGHT_CLASSES:
         apex_n = sum(1 for f in pools[wc].get("tier4", []) if f.org == APEX_FC_NAME)

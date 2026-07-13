@@ -89,13 +89,19 @@ REFUSAL_PROB_MID_TITLE_RUN: float = 0.65
 offering an immediate title shot). The ONLY realistic refusal case -- every
 other approached fighter accepts."""
 
-MAX_APEX_ROSTER: int = 12
+MAX_APEX_ROSTER: int = 55
 """Session B1, Part 3 (Apex over-concentration fix): soft roster cap PER
 WEIGHT CLASS, counting Apex's ACTUAL roster size (not just the ranked top-15)
 -- unlike _apex_need_multiplier's ranked-depth need signal, this is about raw
-headcount. First-pass: tier4's default population is ~15/weight class (before
-any cross-org movement), so 12 lets Apex be the clear largest single-org
-share without literally emptying the other two orgs by roster-size alone."""
+headcount. Raised from 12 (2026-07-13, same session as the tier4 population
+rescale in career/tiers.py/replenishment.py): Apex's own target is now 50/
+weight class (real-UFC-scale, see career/tiers.py's TIER_POPULATION comment),
+so 55 (110% of target) is a comfortable ceiling before poaching throttles,
+rather than a hard limit. The "don't literally empty the other two orgs"
+job this constant used to also carry is now handled directly by
+career/replenishment.py's TIER4_ORG_FLOORS (a real per-org minimum for
+The League/Eastern GP), so this constant only needs to bound Apex's own
+upper end now."""
 
 APEX_ROSTER_SOFT_CAP_MULT: float = 0.15
 """When Apex's roster in a weight class exceeds MAX_APEX_ROSTER, poaching

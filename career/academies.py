@@ -222,11 +222,23 @@ def pick_academy(template_name: str) -> Academy:
 # Shared at REGION level, not per-academy -- multiple academies within a region
 # draw from the same cultural pool, which is realistic.
 #
-# Pool sizes: ~32 first x ~22-26 last ~= 700-830 combos per region.
+# Pool sizes: ~56 first x ~38-44 last ~= 2100-2460 combos per region (expanded
+# 2026-07-13, ~3x, from ~32 first x ~22-26 last ~= 700-830 -- co-requisite of
+# raising career/tiers.py's TIER_POPULATION tier3/tier4: a much bigger Elite/
+# Top-org population means the backstop spawns far more fighters over a long
+# run, and empirical testing showed the old pool sizes exhausted well within
+# a standard 8000-10000-fight verification run at the new population scale
+# (in fact the OLD pool already exhausted around fight #5122 even before this
+# rescale -- a pre-existing latent bug this happened to surface).
 # Uniqueness is enforced per-region via _used_names: regional_name() retries on
 # collision and raises if the pool is somehow exhausted. Call reset_name_registry()
 # at the start of each fresh simulation (generate_all_tiers / generate_population
 # do this automatically).
+# NOTE: names are never recycled back into the pool when a fighter retires/is
+# cut (_used_names only grows) -- this expansion buys a lot more runway but
+# doesn't remove the ceiling. A real fix would recycle names on removal (see
+# career/cuts.py::execute_removal, the shared cut/retirement removal path);
+# out of scope for this pass, flagged as a follow-up.
 
 _NAMES: dict[str, dict[str, list[str]]] = {
     "dagestan_sambo": {
@@ -236,6 +248,11 @@ _NAMES: dict[str, dict[str, list[str]]] = {
             "Makhach", "Rashid", "Said", "Musa", "Alibek", "Suliman", "Husein",
             "Abdulmanap", "Khasan", "Rizvan", "Kurban", "Harun", "Bilal",
             "Ramzan", "Bekhan", "Daud", "Artur", "Timur",
+            # 2026-07-13 name-pool expansion (org roster rescale co-requisite)
+            "Adam", "Aslanbek", "Gadzhi", "Ibragim", "Kamil", "Magomedrasul",
+            "Nurmagomed", "Omar", "Rustam", "Sultan", "Yusuf", "Ziyavdin",
+            "Anzor", "Beslan", "Dzhabrail", "Gazimagomed", "Ibrahim", "Kazbek",
+            "Muslim", "Nariman", "Rasul", "Shamsudin", "Vakha", "Zaurbek",
         ],
         "last": [
             "Nurmagomedov", "Makhachev", "Ankalaev", "Khasbulaev", "Ulanbekov",
@@ -243,6 +260,11 @@ _NAMES: dict[str, dict[str, list[str]]] = {
             "Musaev", "Mamedov", "Saidov", "Khalidov", "Yusupov", "Merabdze",
             "Bakiev", "Gaitaev", "Chimaev", "Dzhitiev", "Magomedov",
             "Kurbanov", "Bazaev", "Gasanov",
+            # 2026-07-13 name-pool expansion (org roster rescale co-requisite)
+            "Abakarov", "Alikhanov", "Betilgiriev", "Dadaev", "Elmurzaev",
+            "Gamzatov", "Idrisov", "Kadyrov", "Labazanov", "Muradov",
+            "Nalgiev", "Omarov", "Pashaev", "Ramazanov", "Sadulaev",
+            "Tagirov", "Vakhaev", "Zaurbekov",
         ],
     },
     "american_wrestling": {
@@ -252,12 +274,21 @@ _NAMES: dict[str, dict[str, list[str]]] = {
             "Kyle", "Chad", "Brett", "Jordan", "Mike", "Daniel", "Ben", "Clay",
             "Hunter", "Travis", "Zach", "Blake", "Cody", "Austin", "Deron",
             "Logan", "Nate", "Nick",
+            # 2026-07-13 name-pool expansion (org roster rescale co-requisite)
+            "Ethan", "Cameron", "Trevor", "Garrett", "Preston", "Wyatt",
+            "Bryce", "Colton", "Dalton", "Grant", "Trent", "Shane", "Wade",
+            "Tyler", "Cole", "Riley", "Mason", "Landon", "Carson", "Braxton",
+            "Dawson", "Gunner", "Maddox", "Beau",
         ],
         "last": [
             "Poirier", "Holloway", "Thompson", "Davis", "Allen", "Brown",
             "Carter", "Johnson", "Williams", "Walker", "Hughes", "Taylor",
             "Crawford", "Lewis", "Sandhagen", "Strickland", "Evans", "Jones",
             "Henderson", "Cruz", "Barnett", "Hardy", "Cannonier", "Spencer",
+            # 2026-07-13 name-pool expansion (org roster rescale co-requisite)
+            "Mitchell", "Foster", "Bishop", "Sanders", "Coleman", "Ferguson",
+            "Griffin", "Harmon", "Kessler", "Lawson", "Nelson", "Owens",
+            "Parker", "Reeves", "Sawyer", "Turner", "Vance", "Wheeler",
         ],
     },
     "brazilian": {
@@ -267,6 +298,11 @@ _NAMES: dict[str, dict[str, list[str]]] = {
             "Vitor", "Lyoto", "Erick", "Alex", "Thiago", "Robson", "Antonio",
             "Diego", "Paulo", "Leandro", "Marcos", "Ronaldo", "Eduardo",
             "Caio", "Pedro", "Leonardo", "Jonas", "Renato", "Victor",
+            # 2026-07-13 name-pool expansion (org roster rescale co-requisite)
+            "Bruno", "Marcelo", "Igor", "Rogerio", "Wagner", "Cristiano",
+            "Gustavo", "Henrique", "Julio", "Nelson", "Osvaldo", "Ricardo",
+            "Sergio", "Tarcisio", "Valdir", "Wallace", "Everton", "Jefferson",
+            "Luciano", "Marcio", "Nilton", "Cassio", "Alessandro", "Fernando",
         ],
         "last": [
             "Silva", "Santos", "Barboza", "Lopes", "Oliveira", "Nogueira",
@@ -274,6 +310,10 @@ _NAMES: dict[str, dict[str, list[str]]] = {
             "Barroso", "Werdum", "Borrachinha", "de Lima", "Teixeira",
             "Costa", "Ribeiro", "Martins", "Ferreira", "Almeida",
             "Figueiredo", "de Souza", "Neves", "Romero",
+            # 2026-07-13 name-pool expansion (org roster rescale co-requisite)
+            "Pereira", "Gomes", "Carvalho", "Correia", "Nascimento", "Araujo",
+            "Vieira", "Monteiro", "Azevedo", "Cardoso", "Dias", "Fonseca",
+            "Guimaraes", "Junqueira", "Lacerda", "Medeiros", "Pinheiro", "Rezende",
         ],
     },
     "muay_thai": {
@@ -284,6 +324,14 @@ _NAMES: dict[str, dict[str, list[str]]] = {
             "Singdam", "Pakorn", "Anuwat", "Chalermpol", "Somchai",
             "Wanchai", "Sombat", "Pornsanae", "Yodwicha", "Karuhat",
             "Lamnammoon", "Pinsinchai", "Sagat", "Dieselnoi", "Superlek", "Saenchai",
+            # 2026-07-13 name-pool expansion (org roster rescale co-requisite) --
+            # this region has the smallest combo count of the 5, so it needed
+            # the expansion most.
+            "Petchboonchu", "Attachai", "Kongsak", "Manasak", "Chatchai",
+            "Wanheng", "Kaewsamrit", "Denkiri", "Thongchai", "Nontachai",
+            "Silachai", "Kritsada", "Panomrunglek", "Wichannoi", "Kongfah",
+            "Sittichok", "Adisak", "Yodphupha", "Petpanomrung", "Sakchainoi",
+            "Chartchai", "Rittidet", "Wisanulek", "Thanonchai",
         ],
         "last": [
             "Jitmuangnon", "Banchamek", "Kaiyanghadaow", "Lookboonmee",
@@ -291,6 +339,11 @@ _NAMES: dict[str, dict[str, list[str]]] = {
             "Petchyindee", "Worapoj", "Kiatphontip", "Dejnapa", "Ratanachai",
             "Suriyanbancherd", "Ruenroeng", "Fairtex", "Sor Singyu",
             "Lukjaomaesaiwaree", "Sitjaroenroj", "Rungsri", "Sitthichai",
+            # 2026-07-13 name-pool expansion (org roster rescale co-requisite)
+            "Sitboonmee", "Wanmaneechot", "Chuwattana", "Kaewjadok", "Sorjor",
+            "Rungrueang", "Kiatbusaba", "Aekwiboonwut", "Yodkhunpon",
+            "Petchnamnak", "Thongpradit", "Chumphonburi", "Jaosuayai",
+            "Sittipatthana", "Wongchai", "Rungnapa",
         ],
     },
     "sea_mixed": {
@@ -300,12 +353,21 @@ _NAMES: dict[str, dict[str, list[str]]] = {
             "Lester", "Romeo", "Rodolfo", "Rene", "Fariz", "Azlan", "Akbar",
             "Thanh", "Minh", "Duc", "Amir", "Garry", "Shinya", "Yushin",
             "Ahmad", "Brandon", "Kang", "Nguyen",
+            # 2026-07-13 name-pool expansion (org roster rescale co-requisite)
+            "Jerome", "Alvin", "Renato", "Reynald", "Gerald", "Dennis",
+            "Wilfredo", "Arjan", "Danilo", "Roldan", "Herbert", "Rex",
+            "Randy", "Elmer", "Nestor", "Ramon", "Boyet", "Alfie", "Rico",
+            "Wesley", "Junard", "Toshio", "Hiroshi", "Kenji",
         ],
         "last": [
             "Folayang", "Striegl", "Sangiao", "Fernandes", "Nguyen", "Tran",
             "Loman", "Cruz", "Antonio", "Yusoff", "Akhbar", "Rahman",
             "Togashi", "Okamoto", "Lee", "Kim", "Moraes", "Simon",
             "Soriano", "Phan", "Do", "Huynh", "Ang", "Masvidal",
+            # 2026-07-13 name-pool expansion (org roster rescale co-requisite)
+            "Aldeguer", "Bulacan", "Catalan", "Dagplas", "Estrada", "Fabroa",
+            "Gascon", "Hernandez", "Ilagan", "Jamora", "Kadena", "Lacson",
+            "Manalo", "Navarro", "Ochoa", "Pineda",
         ],
     },
 }

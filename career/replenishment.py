@@ -52,6 +52,7 @@ from career.tiers import TIER_LEVELS, WEIGHT_CLASSES, generate_tier_fighter
 from career.age import SIM_DAYS_PER_YEAR
 from sim_calendar import get_sim_day
 from career.inflow import generate_crossover, generate_lateral
+from orgs.org_registry import APEX_FC_NAME, THE_LEAGUE_NAME, EASTERN_GP_NAME
 
 # ── Rate constants ────────────────────────────────────────────────────────────
 
@@ -80,19 +81,48 @@ FLOOR_THRESHOLDS: dict[str, int] = {
     "tier0": 30,   # Amateur:      large base pool needed for promotion pipeline
     "tier1": 25,   # Regional
     "tier2": 20,   # Mid-major
-    "tier3": 15,   # Top-org
-    "tier4": 18,   # Elite:        minimum for title fights + ranked matchmaking
-                   # raised from 12 (2026-07-13): Elite attrition (retirement/cuts)
-                   # chronically outpaces tier3->tier4 promotion, so the backstop
-                   # fires very often and the floor becomes the de facto steady-state
-                   # population, not just a rare safety net -- with TIER_POPULATION
-                   # tier4=20, a floor of 12 meant top-tier org rosters equilibrated
-                   # at ~12-14/weight class instead of near the intended 20. 18
-                   # (90% of target) keeps a long 5000-fight sim (seed 42) sitting at
-                   # 17-19/weight class while still passing verify_title_selection,
-                   # verify_elite_matchmaking, verify_migration, verify_replenishment,
-                   # and smoke_test.
+    "tier3": 115,  # Top-org btm-15: raised from 15 (2026-07-13, same session as tier4
+                   # below) -- org-less feeder pool has the same "no organic academy
+                   # inflow" problem as tier4 (only receives tier2->tier3 promotion),
+                   # and was empirically observed sitting near its OLD floor (15) even
+                   # in long runs despite a 25 target -- same equilibrium-at-the-floor
+                   # dynamic as tier4. Scaled to ~88% of the new TIER_POPULATION
+                   # tier3=130 target, matching tier4's ~90%-of-target pattern below.
+    "tier4": 95,   # Elite: sum of TIER4_ORG_FLOORS (see below) -- kept as a plain int
+                   # (not restructured into a per-org dict) because tests/
+                   # verify_replenishment.py reads this as a numeric comparison/
+                   # f-string value. raised from 18 (2026-07-13): comparing to real
+                   # UFC density (~53 active fighters/weight class in ONE org) showed
+                   # the combined 3-org Elite pool (target 20, then 18-equilibrium) was
+                   # too shallow for RANKINGS_SIZE=15 to mean anything -- nearly the
+                   # whole roster was ranked regardless of record. Raising the total
+                   # alone isn't enough though: Apex's poaching is directional (see
+                   # orgs/org_movement.py), so a single combined floor let The League/
+                   # Eastern GP collapse toward zero even with a healthy total --
+                   # confirmed empirically (The League fell to 3 fighters total across
+                   # all 3 weight classes at total-floor=18). TIER4_ORG_FLOORS below
+                   # gives each of the 3 top-tier orgs its own enforced minimum instead.
 }
+
+# ── Per-org Elite floors (tier4 only) ─────────────────────────────────────────
+# tier4 is the only tier tied to a specific org, and the only one where a single
+# combined floor isn't enough (see FLOOR_THRESHOLDS["tier4"] comment above) --
+# Apex poaching only flows one direction, so The League/Eastern GP need their
+# OWN backstop floor or they get hollowed out regardless of total population.
+# Targets derived from orgs/org_registry.py's existing-but-previously-unused
+# prestige field (Apex FC=10.0 / Eastern GP=7.0 / The League=4.0, ratio 10:7:4),
+# anchored at Apex=50 to match real UFC per-org roster depth. Floors are ~90%
+# of each org's target (same ratio established for the old combined tier4
+# floor), enforced per (weight_class, org) by _check_backstop_tier4 below.
+TIER4_ORG_FLOORS: dict[str, int] = {
+    APEX_FC_NAME:    45,   # target 50 (90%)
+    EASTERN_GP_NAME: 32,   # target 35 (~91%)
+    THE_LEAGUE_NAME: 18,   # target 20 (90%)
+}
+assert sum(TIER4_ORG_FLOORS.values()) == FLOOR_THRESHOLDS["tier4"], (
+    "TIER4_ORG_FLOORS must sum to FLOOR_THRESHOLDS['tier4'] -- "
+    "tests/verify_replenishment.py's backstop check asserts against the latter."
+)
 
 BACKSTOP_CHECK_INTERVAL: int = 90  # sim days between floor scans (~quarterly)
 
@@ -144,6 +174,7 @@ class BackstopEntry:
     tier_key:         str
     count:            int    # fighters spawned
     population_before: int
+    org:              str = ""   # tier4 only -- which org's floor this refilled
 
 
 # ── Module-level state ────────────────────────────────────────────────────────
@@ -216,9 +247,15 @@ def _spawn(
     all_fighters: list[Fighter],
     sim_day: int,
     source: str,
+    forced_org: str | None = None,
 ) -> None:
-    """Generate one fighter and add them to pools and all_fighters."""
-    f = generate_tier_fighter(template_name, tier_key, weight_class, academy=academy)
+    """Generate one fighter and add them to pools and all_fighters.
+
+    forced_org: tier4 only -- passed through to generate_tier_fighter so a
+    per-org backstop refill lands on the specific org that was short, instead
+    of the generic weighted-random assign_org().
+    """
+    f = generate_tier_fighter(template_name, tier_key, weight_class, academy=academy, forced_org=forced_org)
     pools[weight_class][tier_key].append(f)
     all_fighters.append(f)
 
@@ -304,6 +341,11 @@ def _check_backstop(
     templates = list(ACADEMIES.keys())
 
     for tier_key in _BACKSTOP_TIER_ORDER:
+        if tier_key == "tier4":
+            for wc in WEIGHT_CLASSES:
+                _check_backstop_tier4(pools, all_fighters, wc, current_day, templates)
+            continue
+
         floor = FLOOR_THRESHOLDS[tier_key]
         for wc in WEIGHT_CLASSES:
             count = len(pools[wc][tier_key])
@@ -328,6 +370,47 @@ def _check_backstop(
                 backstop_academy = random.choice(ACADEMIES[template_name])
                 _spawn(template_name, backstop_academy, wc, tier_key,
                        pools, all_fighters, current_day, "backstop")
+
+
+def _check_backstop_tier4(
+    pools: dict,
+    all_fighters: list[Fighter],
+    wc: str,
+    current_day: int,
+    templates: list[str],
+) -> None:
+    """
+    Per-org Elite floor scan (see TIER4_ORG_FLOORS). Unlike every other tier,
+    tier4 is org-specific -- Apex FC poaching is directional (only inbound),
+    so a single combined floor lets The League/Eastern GP get hollowed out
+    even when the total tier4 population looks healthy. Checks each org's
+    own count against its own floor and refills directly into that org via
+    forced_org, bypassing the generic Apex-skewed weighted-random assignment.
+    """
+    for org, floor in TIER4_ORG_FLOORS.items():
+        count = sum(1 for f in pools[wc]["tier4"] if f.org == org)
+        if count >= floor:
+            continue
+
+        needed = floor - count
+        print(
+            f"  [BACKSTOP] d{current_day}  {wc} tier4 [{org}]: "
+            f"population {count} < floor {floor} -- spawning {needed}"
+        )
+        _backstop_log.append(BackstopEntry(
+            sim_day=current_day,
+            weight_class=wc,
+            tier_key="tier4",
+            count=needed,
+            population_before=count,
+            org=org,
+        ))
+
+        for idx in range(needed):
+            template_name    = templates[idx % len(templates)]
+            backstop_academy = random.choice(ACADEMIES[template_name])
+            _spawn(template_name, backstop_academy, wc, "tier4",
+                   pools, all_fighters, current_day, "backstop", forced_org=org)
 
 
 # ── Crossover and lateral transfer generation ─────────────────────────────────
