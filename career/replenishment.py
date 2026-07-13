@@ -81,7 +81,17 @@ FLOOR_THRESHOLDS: dict[str, int] = {
     "tier1": 25,   # Regional
     "tier2": 20,   # Mid-major
     "tier3": 15,   # Top-org
-    "tier4": 12,   # Elite:        minimum for title fights + ranked matchmaking
+    "tier4": 18,   # Elite:        minimum for title fights + ranked matchmaking
+                   # raised from 12 (2026-07-13): Elite attrition (retirement/cuts)
+                   # chronically outpaces tier3->tier4 promotion, so the backstop
+                   # fires very often and the floor becomes the de facto steady-state
+                   # population, not just a rare safety net -- with TIER_POPULATION
+                   # tier4=20, a floor of 12 meant top-tier org rosters equilibrated
+                   # at ~12-14/weight class instead of near the intended 20. 18
+                   # (90% of target) keeps a long 5000-fight sim (seed 42) sitting at
+                   # 17-19/weight class while still passing verify_title_selection,
+                   # verify_elite_matchmaking, verify_migration, verify_replenishment,
+                   # and smoke_test.
 }
 
 BACKSTOP_CHECK_INTERVAL: int = 90  # sim days between floor scans (~quarterly)
