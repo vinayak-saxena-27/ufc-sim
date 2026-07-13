@@ -8,6 +8,7 @@ from career.tiers import TIER_LEVELS
 from career.academy_reputation import get_effective_pipeline_strength
 from career.rankings import is_eligible_vs_ranked, get_ranked_ids, get_rankings, RANKINGS_SIZE, drop_from_rankings_cache
 from career.org_rankings import get_org_ranked_ids, get_org_rankings, drop_from_org_rankings_cache
+from career.labels import is_champion
 from orgs.org_registry import assign_org, assign_midmajor_org, assign_regional_org, capture_midmajor_feed
 from sim_calendar import get_sim_day
 
@@ -257,38 +258,51 @@ def pick_scheduled_elite_a(
 
     Falls back to any same-org Elite pair in the bootstrap period before
     rankings populate.
+
+    Excludes reigning champions -- almost always ranked #1 in their org, so
+    without this they'd regularly get pulled into this density-fight
+    injection as an ordinary (non-title) fight. A champion's only fights are
+    scheduled title defenses (see sim.py's main-loop champion skip and
+    title.maybe_run_title_fight).
     """
     from orgs.org_registry import ORG_NAMES, THE_LEAGUE_NAME
     schedulable_orgs = [o for o in ORG_NAMES if o != THE_LEAGUE_NAME]
 
-    # Normal path: pick (wc, org) with >= 2 ranked fighters in that org's tier4 pool.
+    # Normal path: pick (wc, org) with >= 2 ranked, non-champion fighters in
+    # that org's tier4 pool.
     eligible: list[tuple[str, str]] = []
     for wc, wc_pools in pools.items():
         tier4 = wc_pools.get("tier4", [])
         for org in schedulable_orgs:
             ranked_ids = get_org_ranked_ids(org)
-            n_ranked_in_org = sum(1 for f in tier4 if f.org == org and f.fighter_id in ranked_ids)
+            n_ranked_in_org = sum(
+                1 for f in tier4
+                if f.org == org and f.fighter_id in ranked_ids and not is_champion(f)
+            )
             if n_ranked_in_org >= 2:
                 eligible.append((wc, org))
 
     if eligible:
         wc, org = random.choice(eligible)
         ranked_ids = get_org_ranked_ids(org)
-        ranked_in_org = [f for f in pools[wc]["tier4"] if f.org == org and f.fighter_id in ranked_ids]
+        ranked_in_org = [
+            f for f in pools[wc]["tier4"]
+            if f.org == org and f.fighter_id in ranked_ids and not is_champion(f)
+        ]
         return random.choice(ranked_in_org)
 
     # Bootstrap fallback (before first rankings update): any (wc, org) with
-    # >= 2 Elite fighters in the same org.
+    # >= 2 non-champion Elite fighters in the same org.
     fallback: list[tuple[str, str]] = []
     for wc, wc_pools in pools.items():
         tier4 = wc_pools.get("tier4", [])
         for org in schedulable_orgs:
-            if sum(1 for f in tier4 if f.org == org) >= 2:
+            if sum(1 for f in tier4 if f.org == org and not is_champion(f)) >= 2:
                 fallback.append((wc, org))
     if not fallback:
         return None
     wc, org = random.choice(fallback)
-    same_org = [f for f in pools[wc]["tier4"] if f.org == org]
+    same_org = [f for f in pools[wc]["tier4"] if f.org == org and not is_champion(f)]
     return random.choice(same_org)
 
 
@@ -321,6 +335,16 @@ def pick_opponent(
             candidates = [f for f in pools[wc][tier] if f is not fighter]
             if candidates:
                 break
+
+    # ── Reigning-champion exclusion ───────────────────────────────────────────
+    # A champion's only fights are scheduled title defenses -- they can't be
+    # drawn as an ordinary opponent either. Per-candidate check (not a single
+    # shared champion id) since tier1/tier2 pools span multiple orgs, each
+    # with their own belt. Falls back to the unfiltered set in thin pools
+    # rather than risk an empty candidate list.
+    non_champ_candidates = [f for f in candidates if not is_champion(f)]
+    if non_champ_candidates:
+        candidates = non_champ_candidates
 
     # ── Org hard-partition (Org Identity session) ────────────────────────────
     # Top-tier orgs are separate promotions, not a shared pool: a tier4 fighter's

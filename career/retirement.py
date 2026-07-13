@@ -46,7 +46,7 @@ from __future__ import annotations
 import random
 
 from career.fighter import Fighter
-from career.labels import WASHED, LEGEND, CHAMPION, LABEL_UPDATE_INTERVAL
+from career.labels import WASHED, LEGEND, CHAMPION, LABEL_UPDATE_INTERVAL, is_champion
 from career.age import _PRIME_END, apply_age_to_fighter
 from career.cuts import execute_removal, is_removed
 from sim_calendar import get_sim_day, days_since, _last_stamped_day
@@ -204,6 +204,15 @@ def maybe_retire_inactive(
     retired: list[Fighter] = []
     for fighter in all_fighters:
         if is_removed(fighter.fighter_id):
+            continue
+        if is_champion(fighter):
+            # A reigning champion's only fights are scheduled title defenses
+            # (matchmaking.py excludes them from ordinary matchmaking), so a
+            # long calendar gap since their last fight is an artifact of that,
+            # not genuine inactivity -- don't let this scan sweep them into
+            # Path 2's age-decline retirement roll for it. They can still
+            # retire normally (including the honorable Path 3) whenever they
+            # do fight, via maybe_evaluate_retirement.
             continue
         last = _last_stamped_day(fighter)
         if last is None:

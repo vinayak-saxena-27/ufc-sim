@@ -154,7 +154,6 @@ function render() {
   document.getElementById("day-display").textContent =
     `${formatSimDay(SNAPSHOT.current_day)} · ${SNAPSHOT.fighters.length} fighters`;
   const parts = [
-    renderRankingsSection(),
     renderTitlesSection(),
     renderOrganizationsSection(),
     renderAcademiesSection(),
@@ -162,45 +161,6 @@ function render() {
   ];
   document.getElementById("content").innerHTML = parts.join("\n");
   renderFightersTable();
-}
-
-function rankingRowsHtml(entries) {
-  return entries.map(e => {
-    const f = fightersById.get(e.fighter_id);
-    const org = f ? orgLink(f.org) : "—";
-    const overall = f ? f.overall.toFixed(1) : "—";
-    const record = f ? escapeHtml(f.record.str) : "—";
-    const labels = f ? labelsText(f.labels) : "—";
-    const scoreTitle = `Win-rate: ${e.win_rate_component.toFixed(2)} · Quality: ${e.quality_component.toFixed(2)} · Hype: ${e.hype_component.toFixed(2)}`;
-    return `<tr>
-      <td class="num">${e.rank}</td>
-      <td>${fighterLink(e.fighter_id, e.fighter_name)}</td>
-      <td>${org}</td>
-      <td class="num">${overall}</td>
-      <td class="num">${record}</td>
-      <td class="num" title="${escapeHtml(scoreTitle)}">${e.score.toFixed(1)}</td>
-      <td class="labels-cell">${labels}</td>
-    </tr>`;
-  }).join("\n");
-}
-
-function renderRankingsSection() {
-  const sections = weightClasses().map(wc => {
-    const entries = SNAPSHOT.elite_rankings[wc] || [];
-    const body = entries.length
-      ? `<table class="wikitable">
-          <thead><tr><th>Rank</th><th>Fighter</th><th>Org</th><th class="num">Overall</th><th class="num">Record</th><th class="num">Score</th><th>Labels</th></tr></thead>
-          <tbody>${rankingRowsHtml(entries)}</tbody>
-        </table>`
-      : `<p class="empty-note">No ranked fighters yet in this division.</p>`;
-    return `<h3>${humanize(wc)}</h3>${body}`;
-  }).join("\n");
-
-  return `<section id="rankings" class="section-block">
-    <h2>Elite Rankings</h2>
-    <p>Top-tier (Tier 4) fighters ranked by a blend of win rate, opponent quality, and hype, per weight class.</p>
-    ${sections}
-  </section>`;
 }
 
 function renderTitlesSection() {
@@ -238,9 +198,32 @@ function renderTitlesSection() {
 }
 
 function renderOrganizationsSection() {
-  const groups = ["Top-tier", "Mid-major", "Regional"];
   const orgs = Object.values(SNAPSHOT.organizations);
-  const sections = groups.map(group => {
+
+  // Top-tier orgs ("the leagues") get full treatment inline: champion + full
+  // ranked roster per weight class, in place of the old standalone combined
+  // "Elite Rankings" page (which mixed all 3 orgs' fighters together and only
+  // ever mattered as a backend matchmaking signal, not a real in-world ranking).
+  const topTier = orgs.filter(o => o.tier_group === "Top-tier").sort((a, b) => b.prestige - a.prestige);
+  const topTierSections = topTier.map(org => {
+    const wcBlocks = weightClasses().map(wc => {
+      const t = titleEntry(wc, "tier4", org.name);
+      const champLine = t && t.champion_id
+        ? `<p><strong>Champion:</strong> ${fighterLink(t.champion_id, t.champion_name)}</p>`
+        : `<p class="empty-note">Title vacant</p>`;
+      return `<h4>${humanize(wc)}</h4>${champLine}${orgRosterTableHtml(org.name, wc)}`;
+    }).join("\n");
+    return `<h3>${orgLink(org.name)}</h3>
+      <p class="muted">${humanize(org.format)} · ${humanize(org.scoring)} · Prestige ${org.prestige.toFixed(1)}</p>
+      ${wcBlocks}`;
+  }).join("\n");
+
+  // Mid-major/Regional stay a simple directory table -- no per-org ranked
+  // roster is exposed for those tiers today (only tier4 has one), and they
+  // weren't part of the Elite-Rankings-vs-Organizations confusion this
+  // restructure is fixing.
+  const otherGroups = ["Mid-major", "Regional"];
+  const otherSections = otherGroups.map(group => {
     const list = orgs.filter(o => o.tier_group === group).sort((a, b) => b.prestige - a.prestige);
     const rows = list.map(o => `<tr>
         <td>${orgLink(o.name)}</td>
@@ -257,8 +240,9 @@ function renderOrganizationsSection() {
 
   return `<section id="organizations" class="section-block">
     <h2>Organizations</h2>
-    <p>Every promotion in the ecosystem, grouped by tier. Click a name for its roster and feeder pipeline.</p>
-    ${sections}
+    <p>Top-tier orgs shown with their current champion and full ranked roster per weight class. Mid-major and regional orgs are listed as a directory below — click a name for its roster and feeder pipeline.</p>
+    ${topTierSections}
+    ${otherSections}
   </section>`;
 }
 
@@ -473,6 +457,33 @@ function orgRosterEntries(orgName, wc) {
     .map((f, i) => ({ rank: i + 1, fighter_id: f.fighter_id, fighter_name: f.name }));
 }
 
+// Shared by the org modal's full roster and the main page's inline top-tier
+// org blocks (renderOrganizationsSection) -- same table shape, one org+wc at a time.
+function orgRosterTableHtml(orgName, wc) {
+  const entries = orgRosterEntries(orgName, wc);
+  if (!entries.length) return `<p class="empty-note">No fighters currently in this division.</p>`;
+  const rows = entries.map(e => {
+    const f = fightersById.get(e.fighter_id);
+    return `<tr>
+      <td class="num">${e.rank}</td>
+      <td>${fighterLink(e.fighter_id, e.fighter_name)}</td>
+      <td>${f ? tierLabel(f.tier) : "—"}</td>
+      <td class="num">${f ? f.overall.toFixed(1) : "—"}</td>
+      <td class="num">${f ? escapeHtml(f.record.str) : "—"}</td>
+      <td class="labels-cell">${f ? labelsText(f.labels) : "—"}</td>
+    </tr>`;
+  }).join("\n");
+  return `<table class="wikitable">
+    <thead><tr><th>Rank</th><th>Fighter</th><th>Tier</th><th class="num">Overall</th><th class="num">Record</th><th>Labels</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+}
+
+// titles is keyed "{wc}|{tier}|{org-or-'-'}" (api.py::_build_snapshot).
+function titleEntry(wc, tier, org) {
+  return SNAPSHOT.titles[`${wc}|${tier}|${org || "-"}`];
+}
+
 function renderOrgModal(org) {
   const feedsTo = org.primary_feeds_to
     ? `${orgLink(org.primary_feeds_to)}${org.secondary_feeds_to ? ` / ${orgLink(org.secondary_feeds_to)}` : ""}`
@@ -481,26 +492,9 @@ function renderOrgModal(org) {
     ? org.primary_feed_from.map(orgLink).join(", ")
     : "—";
 
-  const rosterSections = weightClasses().map(wc => {
-    const entries = orgRosterEntries(org.name, wc);
-    if (!entries.length) return `<h3>${humanize(wc)}</h3><p class="empty-note">No fighters currently in this division.</p>`;
-    const rows = entries.map(e => {
-      const f = fightersById.get(e.fighter_id);
-      return `<tr>
-        <td class="num">${e.rank}</td>
-        <td>${fighterLink(e.fighter_id, e.fighter_name)}</td>
-        <td>${f ? tierLabel(f.tier) : "—"}</td>
-        <td class="num">${f ? f.overall.toFixed(1) : "—"}</td>
-        <td class="num">${f ? escapeHtml(f.record.str) : "—"}</td>
-        <td class="labels-cell">${f ? labelsText(f.labels) : "—"}</td>
-      </tr>`;
-    }).join("\n");
-    return `<h3>${humanize(wc)}</h3>
-      <table class="wikitable">
-        <thead><tr><th>Rank</th><th>Fighter</th><th>Tier</th><th class="num">Overall</th><th class="num">Record</th><th>Labels</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>`;
-  }).join("\n");
+  const rosterSections = weightClasses().map(wc =>
+    `<h3>${humanize(wc)}</h3>${orgRosterTableHtml(org.name, wc)}`
+  ).join("\n");
 
   return `<h1>${escapeHtml(org.name)}</h1>
     <table class="infobox">

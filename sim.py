@@ -29,7 +29,7 @@ from matchmaking import (
     reset_elite_pairings, get_elite_pairings, ElitePairingRecord,
     ELITE_FIGHT_INTERVAL,
 )
-from career.labels import maybe_update_labels, reset_title_registry, update_labels, get_champion_id, CONTENDER
+from career.labels import maybe_update_labels, reset_title_registry, update_labels, get_champion_id, is_champion, CONTENDER
 from title import reset_title_scheduling, maybe_run_title_fight, get_title_history, TITLE_FIGHT_INTERVAL
 from career.age import advance_all_ages, reset_age_advancement
 from career.development import (
@@ -204,6 +204,11 @@ def _run_one_bout(
         # The League's fighters get their fights exclusively through
         # orgs/league_season.py's dedicated scheduler (called below,
         # once per iteration) -- never through normal random matchmaking.
+        return False
+    if is_champion(a):
+        # A reigning champion's only fights are scheduled title defenses
+        # (title.maybe_run_title_fight) -- an ordinary matchmaking fight
+        # wouldn't count as a defense and shouldn't be able to happen at all.
         return False
     try:
         b = pick_opponent(a, pools)

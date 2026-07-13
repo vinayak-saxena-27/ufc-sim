@@ -168,6 +168,16 @@ def get_champion_id(weight_class: str, tier_key: str, org: str = "") -> str | No
     return _title_holders.get((weight_class, tier_key, org))
 
 
+def is_champion(fighter: Fighter) -> bool:
+    """True if fighter currently holds the belt at their own (weight_class,
+    tier, org). Based on the live _title_holders registry (authoritative,
+    updated synchronously by award_title/vacate_title) rather than the
+    CHAMPION label, which only refreshes every LABEL_UPDATE_INTERVAL fights
+    and can lag reality by several fights in either direction."""
+    org = fighter.org if fighter.tier in ("tier1", "tier2", "tier4") else ""
+    return get_champion_id(fighter.weight_class, fighter.tier, org) == fighter.fighter_id
+
+
 def get_title_defenses(weight_class: str, tier_key: str, org: str = "") -> int:
     """Return the current champion's consecutive successful-defense count
     (0 if vacant, a freshly-won reign, or unset). org must be passed
