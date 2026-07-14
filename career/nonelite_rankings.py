@@ -149,8 +149,11 @@ def get_toporg_rankings(weight_class: str) -> list[RankingEntry]:
 
 def is_eligible_for_toporg_ranked(fighter: Fighter) -> bool:
     """Lighter Top-org gate (see TOPORG_GATE_MIN_UNRANKED docstring). Pure
-    predicate, unused by matchmaking this session -- prepared for later."""
-    tier3_fights = [r for r in fighter.fight_history if r.tier == "tier3"]
+    predicate, unused by matchmaking this session -- prepared for later.
+    Uses real_fight_history -- a proving-period gate must reflect real sim
+    fights, not career/tiers.py's presim backfill (see rankings.py's
+    is_eligible_vs_ranked and Fighter.real_fight_history)."""
+    tier3_fights = [r for r in fighter.real_fight_history if r.tier == "tier3"]
     return len(tier3_fights) >= TOPORG_GATE_MIN_UNRANKED or fighter.fighter_id in _toporg_ranked_ids
 
 
@@ -166,9 +169,11 @@ def _score_fighter_tier(
     """Tier-generic sibling of rankings.py's _score_fighter -- identical
     formula, parameterized by tier_key/quality_norm instead of hardcoded
     to tier4. Same weight_class backward-compat handling (empty string =
-    pre-existing history, included rather than excluded)."""
+    pre-existing history, included rather than excluded). Uses
+    real_fight_history for the same reason rankings.py's _score_fighter
+    does -- see that function's comment and Fighter.real_fight_history."""
     tier_fights = [
-        r for r in fighter.fight_history
+        r for r in fighter.real_fight_history
         if r.tier == tier_key and (r.weight_class == fighter.weight_class or r.weight_class == "")
     ]
     n = len(tier_fights)

@@ -131,7 +131,14 @@ def _should_cut(fighter: Fighter) -> bool:
     Labels updated before this call (in sim.py / title.py) so reads are always fresh.
     """
     labels  = fighter.labels
-    history = fighter.fight_history
+    # real_fight_history (not fight_history) -- cut eligibility is entirely
+    # about recent form (trailing windows below), so it must reflect what
+    # the fighter has actually done in the sim, not career/tiers.py's presim
+    # backfill. Without this, a fighter could be cut off fake losses in a
+    # trailing window before ever having a real fight processed -- the same
+    # bug matchmaking.py's promotion/demotion window had (confirmed there:
+    # 38 spurious tier4->tier3 demotions in the first 300 fights).
+    history = fighter.real_fight_history
     n       = len(history)
 
     if labels & _PROTECTED_LABELS:

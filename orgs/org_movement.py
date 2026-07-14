@@ -265,7 +265,12 @@ def _out_of_favor_amplifier(recent_losses: int) -> float:
 
 def _maybe_leave_apex(fighter: Fighter, fight_num: int) -> None:
     wc = fighter.weight_class
-    tier4_fights = [r for r in fighter.fight_history if r.tier == "tier4"]
+    # real_fight_history (not fight_history) -- "recent losing record" is a
+    # recency signal and must reflect what actually happened in the sim, not
+    # career/tiers.py's presim backfill (same bug class found and fixed in
+    # matchmaking.py's promotion/demotion window and career/labels.py /
+    # career/cuts.py's label/cut windows -- see Fighter.real_fight_history).
+    tier4_fights = [r for r in fighter.real_fight_history if r.tier == "tier4"]
     recent = tier4_fights[-OUT_OF_FAVOR_RECENT_WINDOW:]
     recent_losses = sum(1 for r in recent if r.outcome == "loss")
 

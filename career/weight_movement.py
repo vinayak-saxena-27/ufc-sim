@@ -190,8 +190,13 @@ def _late_finish_loss_rate(fighter: Fighter, window: int) -> float:
     Fraction of recent LOSSES-by-finish that landed in the fight's final
     scheduled round. See module docstring for why this is the Driver 3 proxy.
     Returns 0.0 if there are no finish-losses in the window (no signal either way).
+
+    Uses real_fight_history -- this is a recency signal and must reflect
+    real in-sim fights, not career/tiers.py's presim backfill (same bug
+    class already found/fixed in matchmaking.py, career/labels.py,
+    career/cuts.py, and orgs/org_movement.py).
     """
-    recent = fighter.fight_history[-window:]
+    recent = fighter.real_fight_history[-window:]
     finishes = [
         r for r in recent
         if r.outcome == "loss" and r.method != "decision" and r.rounds_completed > 0
@@ -328,7 +333,9 @@ def _driver2_struggling(fighter: Fighter) -> tuple[str, str, float] | None:
     if fighter.cut_severity > _CUT_LOW_THRESHOLD:
         return None  # a hard cut would only get worse moving down
 
-    recent = fighter.fight_history[-_STRUGGLE_WINDOW:]
+    # real_fight_history -- recency signal, must reflect actual sim fights
+    # (see _late_finish_loss_rate's docstring for why).
+    recent = fighter.real_fight_history[-_STRUGGLE_WINDOW:]
     if len(recent) < _STRUGGLE_WINDOW:
         return None
     win_rate = sum(1 for r in recent if r.outcome == "win") / len(recent)

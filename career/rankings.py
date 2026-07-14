@@ -176,8 +176,23 @@ def _score_fighter(
     # their new-division ranking. weight_class == "" is pre-existing fight history
     # recorded before this field existed; included rather than excluded so long-
     # career fighters aren't unfairly penalized for fights that predate the field.
+    #
+    # Uses real_fight_history (not fight_history) -- excludes presim-backfilled
+    # entries (career/tiers.py::generate_presim_history). This score has TWO
+    # components that both silently break under presim contamination if left
+    # unfiltered: (1) confidence(n) is inflated by fake volume, defeating the
+    # exact small-sample dampening it exists for (a fighter with 0 real fights
+    # would get HIGH confidence in a recency-weighted average that's ~100% fake);
+    # (2) _recency_weighted_win_rate's exponential decay doesn't fall off fast
+    # enough to make a large presim tail negligible -- computed directly for a
+    # realistic case (2 real fights behind a 30-fight presim tail, DECAY=0.85):
+    # presim still accounts for ~72% of the decay-weighted mass. Real fights
+    # only cross 50% of the weight at ~5 real fights, roughly independent of
+    # how large the presim tail is (geometric decay converges well before 30
+    # terms). Same bug class as matchmaking.py/labels.py/cuts.py/
+    # org_movement.py/weight_movement.py -- see Fighter.real_fight_history.
     tier4_fights = [
-        r for r in fighter.fight_history
+        r for r in fighter.real_fight_history
         if r.tier == "tier4" and (r.weight_class == fighter.weight_class or r.weight_class == "")
     ]
     n = len(tier4_fights)
@@ -322,8 +337,15 @@ def is_eligible_vs_ranked(fighter: Fighter) -> bool:
     Condition 3: Exceptional hype (>= ELITE_GATE_HYPE_THRESHOLD).
     Condition 4: 0 Elite fights AND >= ELITE_GATE_TIER3_WIN_THRESHOLD wins in last
                  ELITE_GATE_TIER3_WINDOW tier3 fights (natural-promote fast-track).
+
+    Uses real_fight_history throughout -- this is a "proving period" gate
+    (has the fighter actually demonstrated anything in the sim yet?) plus an
+    explicit trailing-window recency check in Condition 4; both are exactly
+    the pattern that breaks under career/tiers.py's presim backfill (a fresh
+    fighter could otherwise skip the proving period on fake volume alone).
+    Same bug class as _score_fighter above -- see Fighter.real_fight_history.
     """
-    tier4_fights = [r for r in fighter.fight_history if r.tier == "tier4"]
+    tier4_fights = [r for r in fighter.real_fight_history if r.tier == "tier4"]
     n_tier4 = len(tier4_fights)
 
     # Condition 1
@@ -340,7 +362,7 @@ def is_eligible_vs_ranked(fighter: Fighter) -> bool:
 
     # Condition 4
     if n_tier4 == 0:
-        tier3_fights = [r for r in fighter.fight_history if r.tier == "tier3"]
+        tier3_fights = [r for r in fighter.real_fight_history if r.tier == "tier3"]
         if len(tier3_fights) >= ELITE_GATE_TIER3_WINDOW:
             last_t3 = tier3_fights[-ELITE_GATE_TIER3_WINDOW:]
             wins_t3 = sum(1 for r in last_t3 if r.outcome == "win")

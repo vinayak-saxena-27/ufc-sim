@@ -191,7 +191,12 @@ _TIER_LEVEL: dict[str, int] = {t: i for i, t in enumerate(TIER_LEVELS)}
 
 
 def _recent_win_rate(fighter: Fighter, window: int) -> float:
-    recent = fighter.fight_history[-window:]
+    """A trailing-window RECENCY signal -- uses real_fight_history (excludes
+    presim-backfilled entries, see that property's docstring) so this reads
+    what the fighter has actually done lately in the sim, not fake history
+    generated at birth. Used by Prospect ("recent wins") and Washed
+    ("recent decline") -- both explicitly about recent trajectory."""
+    recent = fighter.real_fight_history[-window:]
     if not recent:
         return 0.0
     return sum(1 for r in recent if r.outcome == "win") / len(recent)
@@ -202,8 +207,12 @@ def _tier_fights(fighter: Fighter, tier_key: str) -> list:
 
 
 def _peak_win_rate(fighter: Fighter, window: int) -> float:
-    """Best win rate over any consecutive `window`-fight stretch in career history."""
-    history = fighter.fight_history
+    """Best win rate over any consecutive `window`-fight stretch in REAL
+    (non-presim) career history -- same real_fight_history rationale as
+    _recent_win_rate. Used by Washed to detect "had a genuine higher peak";
+    a peak found inside fake backfilled history wouldn't reflect anything
+    that happened in the sim."""
+    history = fighter.real_fight_history
     if len(history) < window:
         return 0.0
     best = 0.0
@@ -327,8 +336,12 @@ def compute_labels(fighter: Fighter, existing_labels: set[str]) -> set[str]:
     # Elite-tier fighter with strong recent form, not yet champion.
     # Relatively exclusive: only a handful per division should qualify at once.
     # The 60% win rate over the last 5 Elite fights keeps the pool small.
+    # Uses REAL (non-presim) tier4 history throughout -- this label is
+    # explicitly about recent form, so both the minimum-fights gate and the
+    # trailing window need to reflect fights the fighter actually had in the
+    # sim, not backfilled career volume (see Fighter.real_fight_history).
     if CHAMPION not in labels and fighter.tier == _CONTENDER_TIER:
-        elite_fights_all = _tier_fights(fighter, "tier4")
+        elite_fights_all = [r for r in fighter.real_fight_history if r.tier == "tier4"]
         if len(elite_fights_all) >= _CONTENDER_MIN_FIGHTS:
             recent_elite = elite_fights_all[-5:]
             elite_recent_wr = (

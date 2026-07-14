@@ -255,6 +255,18 @@ def _pick_challenger(
     rankings = _rankings_for(weight_class, org)
     ranked_eligible = [e for e in rankings if e.fighter.fighter_id in eligible_ids]
 
+    # Prefer non-losing-record challengers even on the NORMAL rankings-driven
+    # path, not just the thin-pool fallback below -- the ranking formula
+    # (career/rankings.py) rewards recency-weighted form and opponent quality
+    # with no floor on cumulative win/loss record, so a losing-record fighter
+    # can legitimately reach the top of the ranked list. Without this, that
+    # fighter would still become the #1 challenger (and could win the title)
+    # via this path, since the fallback-only guard below is rarely reached
+    # once rankings are populated (which is most of the time now).
+    non_losing_ranked = [e for e in ranked_eligible if e.fighter.wins >= e.fighter.losses]
+    if non_losing_ranked:
+        ranked_eligible = non_losing_ranked
+
     if not ranked_eligible:
         return max(_prefer_non_losing(eligible), key=lambda f: f.overall), "fallback"
 
@@ -296,6 +308,13 @@ def _pick_vacant_pair(
     eligible_ids = {f.fighter_id for f in pool}
     rankings = _rankings_for(weight_class, org)
     ranked_eligible = [e for e in rankings if e.fighter.fighter_id in eligible_ids]
+
+    # Same non-losing preference as _pick_challenger's normal path (see its
+    # comment) -- a vacant-belt fight shouldn't crown a losing-record fighter
+    # just because they out-scored everyone on recency/quality/hype.
+    non_losing_ranked = [e for e in ranked_eligible if e.fighter.wins >= e.fighter.losses]
+    if non_losing_ranked:
+        ranked_eligible = non_losing_ranked
 
     if len(ranked_eligible) < 2:
         candidates = _prefer_non_losing(pool)

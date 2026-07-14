@@ -171,6 +171,30 @@ class Fighter:
     def record_str(self) -> str:
         return f"{self.wins}-{self.losses}"
 
+    @property
+    def real_fight_history(self) -> list[FightResult]:
+        """fight_history entries stamped with a real sim_day -- excludes
+        presim-backfilled entries (career/tiers.py::generate_presim_history)
+        and any other unstamped/pre-calendar history, both of which use the
+        sim_day=-1 sentinel (see FightResult.sim_day's docstring).
+
+        Use this (not fight_history directly) for any "recent form" signal --
+        rolling windows, peak-vs-current comparisons, anything meant to
+        detect what a fighter has actually done LATELY in the sim. Confirmed
+        the hard way: career/tiers.py's presim backfill caused 38 tier4->
+        tier3 demotions in the first 300 fights of a fresh run (vs 0 without
+        it) before matchmaking.py's promotion/demotion window was fixed to
+        use this same filter -- fighters were being evaluated on fake losses
+        that happened to fall in the trailing window, not anything that
+        happened in the sim. career/labels.py and career/cuts.py have the
+        same "last N fights" pattern and need the same treatment.
+
+        Cumulative, whole-career facts (wins, losses, record_by_tier, ranking
+        quality/volume) are fine reading fight_history directly -- crediting
+        a backfilled career with its own record is the intended design of
+        the presim feature; only RECENCY signals need this filter."""
+        return [r for r in self.fight_history if r.sim_day != -1]
+
     def record_by_tier(self, tier: str) -> tuple[int, int]:
         """Returns (wins, losses) for fights tagged with the given tier."""
         w = sum(1 for r in self.fight_history if r.outcome == "win"  and r.tier == tier)

@@ -377,15 +377,23 @@ def pick_discovery_a(
     requires >= 2 eligible fighters in a (weight_class, org) pair, excludes
     reigning champions (who by construction already have a real tier4 track
     record), self-limiting (silently returns None if no eligible pair exists).
-    No bootstrap-fallback branch needed -- unlike pick_scheduled_elite_a's
-    (which exists only because rankings start empty), every tier4 fighter
-    starts at 0 tier4 fights, so "eligible" is trivially true from fight #1.
+    No bootstrap-fallback branch needed -- every tier4 fighter starts at 0
+    REAL tier4 fights (see below), so "eligible" is trivially true from
+    fight #1.
+
+    Eligibility is counted from real_fight_history, not fight_history --
+    without this, career/tiers.py's presim backfill would make this
+    mechanism silently useless for exactly the population it most needs to
+    help: an older fighter with a 20+ fight presim tail would already be
+    "over the limit" on paper despite having zero real sim fights, and would
+    never receive a discovery-injected fight at all. Same bug class as
+    everywhere else -- see Fighter.real_fight_history.
     """
     from orgs.org_registry import ORG_NAMES, THE_LEAGUE_NAME
     schedulable_orgs = [o for o in ORG_NAMES if o != THE_LEAGUE_NAME]
 
     def _tier4_fight_count(f: Fighter) -> int:
-        return sum(1 for r in f.fight_history if r.tier == "tier4")
+        return sum(1 for r in f.real_fight_history if r.tier == "tier4")
 
     eligible: list[tuple[str, str]] = []
     for wc, wc_pools in pools.items():
@@ -499,8 +507,18 @@ def _recent_tier_fights(fighter: Fighter, window: int) -> list:
     gets extra scheduled bouts will cycle through this window somewhat
     faster than a fighter in another tier; that's an accepted consequence
     of fighting more often, not something this window filters around.
+
+    Uses fighter.real_fight_history (excludes presim-backfilled/unstamped
+    entries, see that property's docstring) -- promotion/demotion should
+    reflect recently DEMONSTRATED in-sim performance, not a fighter's
+    backfilled career. Confirmed empirically that without this filter, a
+    fresh tier4 population produced 38 tier4->tier3 demotions in the first
+    300 fights (vs 0 with it) -- fighters were being demoted the moment their
+    first REAL fight resolved, purely off presim losses that happened to
+    fall in the recent-window tail, never reflecting anything that actually
+    happened in the sim.
     """
-    tier_fights = [r for r in fighter.fight_history if r.tier == fighter.tier]
+    tier_fights = [r for r in fighter.real_fight_history if r.tier == fighter.tier]
     return tier_fights[-window:]
 
 

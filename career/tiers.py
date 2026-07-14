@@ -4,13 +4,14 @@ import random
 from dataclasses import dataclass
 from statistics import mean as _mean
 
-from career.fighter import Fighter
+from career.fighter import Fighter, FightResult
 from career.templates import TEMPLATES, _TEMPLATE_REGIONS
 from career.academies import pick_academy, regional_name, reset_name_registry, Academy
 from career.development import assign_prospect_tier
 from career.weight_cut import generate_cut_severity
 from career.style_mixing import generate_style_flexibility
 from career.hype import generate_hype_seed
+from engine.fight import SCALE
 
 # ─── Tuning constants ─────────────────────────────────────────────────────────
 # Per-attribute noise added on top of the template shape offset.
@@ -116,6 +117,82 @@ def _template_natural_overall(template_name: str) -> float:
     return _mean(m for m, _ in TEMPLATES[template_name].values())
 
 
+# ── Pre-sim fight-history backfill (experimental, 2026-07-13) ───────────────
+# Every fighter previously started with a completely blank fight_history
+# regardless of age -- a fighter generated directly at tier3/tier4 at age 35
+# looked, on paper, identical to a fresh 23-year-old until the SIM itself
+# produced enough fights to tell them apart. That blank slate is a candidate
+# root cause behind several things investigated this session (thin-looking
+# rankings, "zombie" fighters with near-zero fight history sitting for years,
+# fringe/losing-record ranked entries): a realistic starting population
+# should already have a career's worth of history behind its older members.
+# Experimental -- verify against the same metrics used to investigate those
+# issues before deciding this is the right lever to pull.
+
+_PRESIM_DEBUT_AGE: int = 18
+"""Assumed age every fighter's backfilled career began, regardless of the
+tier/age they were actually generated at -- matches tier0's own age center
+(19), i.e. everyone is assumed to have come up through the amateur ranks."""
+
+_PRESIM_FIGHTS_PER_YEAR: float = 2.0
+"""Average fights/year over a full backfilled career. Deliberately LOWER than
+career.age.FIGHTS_PER_SIM_YEAR=3 -- that rate models an established tier4
+pro's active cadence once the sim is running; a full career backfill blends
+in the slower amateur/regional years, so a flat career-average rate should
+sit below the peak-career rate, not match it."""
+
+_PRESIM_FIGHTS_PER_YEAR_STD: float = 0.6
+"""Gaussian jitter on the per-year rate so same-age fighters don't all get
+an identical backfilled fight count."""
+
+_PRESIM_METHOD_WEIGHTS: dict[str, float] = {"decision": 0.55, "KO/TKO": 0.30, "submission": 0.15}
+"""Cosmetic only (backfilled fights don't trigger hype/development/labels --
+those only fire when the sim actually resolves a fight) -- just gives the
+fight-history table plausible variety instead of "decision" 100% of the time."""
+
+
+def generate_presim_history(fighter: Fighter) -> None:
+    """
+    Backfill a plausible pre-sim fight record (wins/losses only, no real
+    opponents) based on the fighter's age and skill (.overall), so rankings/
+    labels aren't reading a blank slate for a fighter who -- per their age --
+    should already have a career behind them.
+
+    Win probability per backfilled fight reuses engine.fight.SCALE's exact
+    calibration against a flat "league-average" opponent (overall=0.0) -- the
+    same zero-centered baseline every tier's power level is already defined
+    against, not a new, separately-tuned heuristic.
+
+    Every backfilled FightResult uses weight_class="" and the default
+    sim_day=-1 -- the SAME convention this codebase already uses for
+    "pre-existing history from before a field existed" (see
+    FightResult.weight_class's docstring): counted by the rankings formula
+    (which explicitly includes weight_class=="" entries) and win/loss
+    properties, but never treated as a real activity/inactivity signal
+    (calendar-based checks like sim_calendar._last_stamped_day skip sim_day=-1).
+    """
+    years_active = max(0.0, fighter.age - _PRESIM_DEBUT_AGE)
+    rate = max(0.0, random.gauss(_PRESIM_FIGHTS_PER_YEAR, _PRESIM_FIGHTS_PER_YEAR_STD))
+    n_fights = round(years_active * rate)
+    if n_fights <= 0:
+        return
+
+    win_p = 1.0 / (1.0 + 10.0 ** (-(fighter.overall - 0.0) / SCALE))
+    methods = list(_PRESIM_METHOD_WEIGHTS.keys())
+    method_weights = list(_PRESIM_METHOD_WEIGHTS.values())
+
+    for _ in range(n_fights):
+        outcome = "win" if random.random() < win_p else "loss"
+        fighter.fight_history.append(FightResult(
+            opponent_name="Uncredited Opponent",
+            outcome=outcome,
+            method=random.choices(methods, weights=method_weights, k=1)[0],
+            org="",
+            tier=fighter.tier,
+            rounds_completed=3,
+        ))
+
+
 def generate_tier_fighter(
     template_name: str,
     tier_key: str,
@@ -183,6 +260,7 @@ def generate_tier_fighter(
         style_flexibility=generate_style_flexibility(attrs["fight_iq"], template_name),
         **attrs,
     )
+    generate_presim_history(fighter)
     # Org Identity sessions: fighters generated directly into tier2 (mid-major)
     # or tier4 (initial population pyramid) need an org immediately, same as
     # fighters who PROMOTE into those tiers mid-sim (see
