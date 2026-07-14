@@ -538,6 +538,34 @@ def _avoidance_hard_ok(
     return _cooldown_cleared(fighter, candidate, current_day)
 
 
+def title_pairing_allowed(
+    fighter: Fighter, candidate: Fighter, current_day: int, allow_exemption: bool = True,
+) -> bool:
+    """Same hard-cap + cooldown rule as pick_opponent's opponent-avoidance
+    (see AVOID_* constants), exposed for title.py's rankings-driven
+    challenger/vacant-pair selection -- which never calls pick_opponent, so
+    it has no other path into this logic. Unlike _avoidance_hard_ok (which
+    only checks `fighter`'s own pending_rematch_opponent_name), this checks
+    BOTH sides' exemption flags, since title.py's two callers pass the pair
+    in different roles (champion vs. challenger candidate; slot-A candidate
+    vs. slot-B candidate) and whichever fighter lost the controversial
+    decision holds the exemption naming the other.
+
+    `allow_exemption=False` (title.py passes this for a champion who hasn't
+    defended enough times yet -- see REMATCH_MIN_DEFENSES) disables the
+    bypass entirely for this check, falling through to a plain cooldown
+    check -- an immediate/soon rematch is only realistic for an established
+    champion, not one who just won the belt."""
+    if _meeting_count(fighter, candidate) >= AVOID_HARD_CAP:
+        return False
+    if allow_exemption:
+        if fighter.pending_rematch_opponent_name == candidate.name:
+            return True
+        if candidate.pending_rematch_opponent_name == fighter.name:
+            return True
+    return _cooldown_cleared(fighter, candidate, current_day)
+
+
 def pick_opponent(
     fighter: Fighter,
     pools: dict[str, dict[str, list[Fighter]]],
