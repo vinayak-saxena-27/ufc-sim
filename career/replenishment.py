@@ -47,7 +47,7 @@ import random
 from dataclasses import dataclass, field
 
 from career.fighter import Fighter
-from career.academies import ACADEMIES, ACADEMY_PIPELINE, Academy
+from career.academies import ACADEMIES, ACADEMY_PIPELINE, Academy, recycle_names
 from career.tiers import TIER_LEVELS, WEIGHT_CLASSES, generate_tier_fighter
 from career.age import SIM_DAYS_PER_YEAR
 from sim_calendar import get_sim_day
@@ -181,6 +181,23 @@ class BackstopEntry:
 
 _next_prospect_day: dict[str, int] = {}      # academy_name -> next sim_day to generate
 _last_backstop_day: int = 0
+
+# Round-robin cursor for backstop template selection. The old per-event
+# `templates[idx % len(templates)]` restarted at index 0 EVERY backstop
+# event -- and since dict order puts dagestan_sambo first, the typical
+# 1-2-fighter floor top-up handed dagestan a spawn every single event while
+# sea_mixed (last) almost never got one. Measured over a 10k-attempt run:
+# 1432 dagestan spawns vs 530 sea_mixed (2.7x), with the backstop (54% of
+# all generation) as the driver. A cursor that persists ACROSS events makes
+# the rotation actually fair without consuming extra RNG draws.
+_backstop_template_cursor: int = 0
+
+
+def _next_backstop_template(templates: list[str]) -> str:
+    global _backstop_template_cursor
+    t = templates[_backstop_template_cursor % len(templates)]
+    _backstop_template_cursor += 1
+    return t
 _next_crossover_day: int = 0
 _next_lateral_day: int = 0
 
@@ -286,12 +303,14 @@ def initialize_replenishment() -> None:
     simultaneously on day 1. Crossover and lateral first-days are also staggered.
     """
     global _next_prospect_day, _last_backstop_day, _next_crossover_day, _next_lateral_day
+    global _backstop_template_cursor
 
     _next_prospect_day.clear()
     _event_log.clear()
     _backstop_log.clear()
     _yearly_history.clear()
     _last_backstop_day = 0
+    _backstop_template_cursor = 0
     _next_crossover_day = round(random.uniform(0.0, _CROSSOVER_INTERVAL))
     _next_lateral_day   = round(random.uniform(0.0, _LATERAL_INTERVAL))
 
@@ -338,6 +357,19 @@ def _check_backstop(
         return
     _last_backstop_day = current_day
 
+    # Name-recycling sweep (career/academies.py) -- same quarterly cadence as
+    # the floor scan, and this is the one place with the whole active
+    # population in hand to build the referenced-names set (active fighters'
+    # own names plus every opponent_name still linked from an active fighter's
+    # history; several systems match opponents by name, so a referenced name
+    # must never be reassigned -- see academies.recycle_names).
+    referenced: set[str] = set()
+    for f in all_fighters:
+        referenced.add(f.name)
+        for r in f.fight_history:
+            referenced.add(r.opponent_name)
+    recycle_names(referenced, current_day)
+
     templates = list(ACADEMIES.keys())
 
     for tier_key in _BACKSTOP_TIER_ORDER:
@@ -365,8 +397,8 @@ def _check_backstop(
                 population_before=count,
             ))
 
-            for idx in range(needed):
-                template_name   = templates[idx % len(templates)]
+            for _ in range(needed):
+                template_name   = _next_backstop_template(templates)
                 backstop_academy = random.choice(ACADEMIES[template_name])
                 _spawn(template_name, backstop_academy, wc, tier_key,
                        pools, all_fighters, current_day, "backstop")
@@ -406,8 +438,8 @@ def _check_backstop_tier4(
             org=org,
         ))
 
-        for idx in range(needed):
-            template_name    = templates[idx % len(templates)]
+        for _ in range(needed):
+            template_name    = _next_backstop_template(templates)
             backstop_academy = random.choice(ACADEMIES[template_name])
             _spawn(template_name, backstop_academy, wc, "tier4",
                    pools, all_fighters, current_day, "backstop", forced_org=org)

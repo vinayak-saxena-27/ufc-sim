@@ -46,8 +46,23 @@ if TYPE_CHECKING:
 
 # ── Part 1: Global clock ──────────────────────────────────────────────────────
 
-SIM_DAYS_PER_FIGHT: int = 2
-"""Simulated days that elapse per fight processed. First-pass estimate."""
+SIM_DAYS_PER_FIGHT: int = 1
+"""Simulated days that elapse per fight processed.
+
+Lowered from 2 (matchmaking-audit session, fight-frequency defect): this
+constant IS the sim's total fight capacity per calendar time -- one bout per
+N days for the ENTIRE world (23 orgs + amateur circuits), independent of
+population size. Measured at 2 days/fight over a 67-sim-year run:
+fights-per-fighter-per-year averaged 0.18-0.37 for tiers 0-3 and 0.74 for
+tier4, against a real-world sanity anchor of 2-4/year for active elite
+fighters -- fighters weren't ineligible, they were being SAMPLED too rarely
+for the throughput to go around. Halving days-per-fight doubles per-year
+throughput at unchanged population (measured after: tier4 ~1.5/yr mean).
+Co-tuned in the same change so per-YEAR rates of fight-count-cadenced
+systems hold: TITLE_FIGHT_INTERVAL 9->18 (title.py, holds the ~310-day
+tier4 defense gap), BASE_SCOUT_PROB 0.03->0.015 (nonelite_rankings.py,
+holds scout-promotions/year -- rankings recompute every 25 FIGHTS, which is
+now twice as often per year)."""
 
 _current_day: int = 0
 

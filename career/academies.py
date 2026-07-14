@@ -222,23 +222,21 @@ def pick_academy(template_name: str) -> Academy:
 # Shared at REGION level, not per-academy -- multiple academies within a region
 # draw from the same cultural pool, which is realistic.
 #
-# Pool sizes: ~56 first x ~38-44 last ~= 2100-2460 combos per region (expanded
-# 2026-07-13, ~3x, from ~32 first x ~22-26 last ~= 700-830 -- co-requisite of
-# raising career/tiers.py's TIER_POPULATION tier3/tier4: a much bigger Elite/
-# Top-org population means the backstop spawns far more fighters over a long
-# run, and empirical testing showed the old pool sizes exhausted well within
-# a standard 8000-10000-fight verification run at the new population scale
-# (in fact the OLD pool already exhausted around fight #5122 even before this
-# rescale -- a pre-existing latent bug this happened to surface).
+# Pool sizes: ~100-110 first x ~70-80 last ~= 7000-8700 combos per region
+# (matchmaking-audit session: expanded another ~3.3-3.7x from the 2026-07-13
+# sizes of ~2100-2460, which measurably exhausted at ~fight #7500 of a
+# 50-sim-year seed-42 run -- dagestan_sambo first, since the academy-
+# reputation feedback loop skews generation volume toward it).
 # Uniqueness is enforced per-region via _used_names: regional_name() retries on
 # collision and raises if the pool is somehow exhausted. Call reset_name_registry()
 # at the start of each fresh simulation (generate_all_tiers / generate_population
 # do this automatically).
-# NOTE: names are never recycled back into the pool when a fighter retires/is
-# cut (_used_names only grows) -- this expansion buys a lot more runway but
-# doesn't remove the ceiling. A real fix would recycle names on removal (see
-# career/cuts.py::execute_removal, the shared cut/retirement removal path);
-# out of scope for this pass, flagged as a follow-up.
+# The former "names are never recycled" ceiling is now fixed at the root:
+# see the name-recycling block below (_retired_names / release_name /
+# recycle_names) -- a removed fighter's name returns to the pool after a
+# cooldown once nothing active references it, so steady-state usage is
+# bounded by the ACTIVE population plus a referenced-names tail rather than
+# by cumulative all-time generation volume.
 
 _NAMES: dict[str, dict[str, list[str]]] = {
     "dagestan_sambo": {
@@ -253,6 +251,15 @@ _NAMES: dict[str, dict[str, list[str]]] = {
             "Nurmagomed", "Omar", "Rustam", "Sultan", "Yusuf", "Ziyavdin",
             "Anzor", "Beslan", "Dzhabrail", "Gazimagomed", "Ibrahim", "Kazbek",
             "Muslim", "Nariman", "Rasul", "Shamsudin", "Vakha", "Zaurbek",
+            # matchmaking-audit session expansion (recycling co-requisite)
+            "Abdul", "Abdulla", "Adlan", "Akhmed", "Alim", "Amir", "Apti",
+            "Arbi", "Arsen", "Askhab", "Ayub", "Baysangur", "Chingiz",
+            "Dagir", "Dalgat", "Deni", "Dzhamal", "Elbrus", "Gamzat",
+            "Gasan", "Idris", "Ilyas", "Isa", "Iskhak", "Kadi", "Khamzat",
+            "Khizir", "Lecha", "Lom-Ali", "Magomedali", "Mairbek", "Mansur",
+            "Movsar", "Murad", "Nazhmudin", "Ramazan", "Salman", "Saygid",
+            "Shakhban", "Sharap", "Shuayb", "Tagir", "Turpal", "Ubaidula",
+            "Umalat", "Uvais", "Yakub", "Yunus", "Zalim", "Zaynulla",
         ],
         "last": [
             "Nurmagomedov", "Makhachev", "Ankalaev", "Khasbulaev", "Ulanbekov",
@@ -265,6 +272,15 @@ _NAMES: dict[str, dict[str, list[str]]] = {
             "Gamzatov", "Idrisov", "Kadyrov", "Labazanov", "Muradov",
             "Nalgiev", "Omarov", "Pashaev", "Ramazanov", "Sadulaev",
             "Tagirov", "Vakhaev", "Zaurbekov",
+            # matchmaking-audit session expansion (recycling co-requisite)
+            "Abdulaev", "Agaev", "Akaev", "Alkhasov", "Atsaev", "Bagov",
+            "Batirov", "Bekov", "Daudov", "Dzhamalov", "Efendiev",
+            "Gadzhimuradov", "Gairbekov", "Gimbatov", "Isaev", "Ismailov",
+            "Kagirov", "Kerimov", "Khabilov", "Khamidov", "Kuramagomedov",
+            "Kurbanaliev", "Magomedaliev", "Makhmudov", "Mutaev",
+            "Nurudinov", "Rabadanov", "Salamov", "Shapiev", "Sharipov",
+            "Suleymanov", "Taymazov", "Tsarukaev", "Umarov", "Vagabov",
+            "Yakubov", "Zubairaev",
         ],
     },
     "american_wrestling": {
@@ -279,6 +295,15 @@ _NAMES: dict[str, dict[str, list[str]]] = {
             "Bryce", "Colton", "Dalton", "Grant", "Trent", "Shane", "Wade",
             "Tyler", "Cole", "Riley", "Mason", "Landon", "Carson", "Braxton",
             "Dawson", "Gunner", "Maddox", "Beau",
+            # matchmaking-audit session expansion (recycling co-requisite)
+            "Aaron", "Aiden", "Alec", "Andre", "Anthony", "Ashton",
+            "Bobby", "Brad", "Brady", "Brendan", "Brian", "Caleb", "Casey",
+            "Chase", "Chris", "Craig", "Dane", "Dante", "Darren", "Devin",
+            "Donnie", "Drew", "Dylan", "Eli", "Eric", "Evan", "Gage",
+            "Gavin", "Grady", "Heath", "Ian", "Jared", "Jason", "Jesse",
+            "Joel", "Johnny", "Josh", "Keith", "Kurt", "Kyler", "Lance",
+            "Levi", "Micah", "Nolan", "Owen", "Paul", "Reid", "Scott",
+            "Seth", "Tanner", "Todd", "Troy", "Vince", "Weston", "Zane",
         ],
         "last": [
             "Poirier", "Holloway", "Thompson", "Davis", "Allen", "Brown",
@@ -289,6 +314,14 @@ _NAMES: dict[str, dict[str, list[str]]] = {
             "Mitchell", "Foster", "Bishop", "Sanders", "Coleman", "Ferguson",
             "Griffin", "Harmon", "Kessler", "Lawson", "Nelson", "Owens",
             "Parker", "Reeves", "Sawyer", "Turner", "Vance", "Wheeler",
+            # matchmaking-audit session expansion (recycling co-requisite)
+            "Adams", "Baker", "Bennett", "Blackburn", "Boone", "Bradley",
+            "Briggs", "Brooks", "Buchanan", "Burns", "Caldwell", "Campbell",
+            "Carroll", "Chandler", "Clark", "Collins", "Conley", "Cooper",
+            "Decker", "Dixon", "Donovan", "Doyle", "Duncan", "Ellis",
+            "Emerson", "Fisher", "Fleming", "Ford", "Franklin", "Garrison",
+            "Gibson", "Graham", "Hayes", "Holt", "Hopkins", "Hudson",
+            "Ingram", "Jennings",
         ],
     },
     "brazilian": {
@@ -303,6 +336,15 @@ _NAMES: dict[str, dict[str, list[str]]] = {
             "Gustavo", "Henrique", "Julio", "Nelson", "Osvaldo", "Ricardo",
             "Sergio", "Tarcisio", "Valdir", "Wallace", "Everton", "Jefferson",
             "Luciano", "Marcio", "Nilton", "Cassio", "Alessandro", "Fernando",
+            # matchmaking-audit session expansion (recycling co-requisite)
+            "Adriano", "Alan", "Alexandre", "Amaury", "Andre", "Ariel",
+            "Arnaldo", "Augusto", "Benicio", "Breno", "Carlinhos", "Celso",
+            "Cicero", "Cleber", "Danilo", "Davi", "Denis", "Edson", "Elias",
+            "Emerson", "Enzo", "Fabiano", "Fabio", "Flavio", "Geraldo",
+            "Gilberto", "Guilherme", "Heitor", "Helio", "Hugo", "Iago",
+            "Ivan", "Jackson", "Jair", "Jean", "Joaquim", "Jorge", "Jose",
+            "Kaique", "Kleber", "Luan", "Luiz", "Mateus", "Mauro", "Michel",
+            "Milton", "Murilo", "Natan", "Otavio", "Vinicius",
         ],
         "last": [
             "Silva", "Santos", "Barboza", "Lopes", "Oliveira", "Nogueira",
@@ -314,6 +356,15 @@ _NAMES: dict[str, dict[str, list[str]]] = {
             "Pereira", "Gomes", "Carvalho", "Correia", "Nascimento", "Araujo",
             "Vieira", "Monteiro", "Azevedo", "Cardoso", "Dias", "Fonseca",
             "Guimaraes", "Junqueira", "Lacerda", "Medeiros", "Pinheiro", "Rezende",
+            # matchmaking-audit session expansion (recycling co-requisite)
+            "Assis", "Barbosa", "Batista", "Bezerra", "Braga", "Brito",
+            "Camargo", "Campos", "Castro", "Cunha", "Dantas", "Duarte",
+            "Fagundes", "Farias", "Freitas", "Furtado", "Galvao", "Garcia",
+            "Goncalves", "Guedes", "Henriques", "Lemos", "Lima", "Macedo",
+            "Magalhaes", "Mendes", "Mesquita", "Miranda", "Moreira", "Mota",
+            "Nunes", "Pacheco", "Paiva", "Pires", "Prado", "Queiroz",
+            "Ramos", "Rocha", "Sales", "Sampaio", "Santana", "Siqueira",
+            "Soares", "Tavares", "Torres", "Valente", "Vasconcelos", "Xavier",
         ],
     },
     "muay_thai": {
@@ -332,6 +383,17 @@ _NAMES: dict[str, dict[str, list[str]]] = {
             "Silachai", "Kritsada", "Panomrunglek", "Wichannoi", "Kongfah",
             "Sittichok", "Adisak", "Yodphupha", "Petpanomrung", "Sakchainoi",
             "Chartchai", "Rittidet", "Wisanulek", "Thanonchai",
+            # matchmaking-audit session expansion (recycling co-requisite)
+            "Apidej", "Boonlai", "Chanchai", "Chatri", "Dechapol",
+            "Detnarong", "Ekapol", "Jakkrit", "Jirasak", "Kamon",
+            "Kiatisak", "Kittipong", "Komsan", "Krit", "Kulabdam",
+            "Mongkol", "Narong", "Nattawut", "Nopparat", "Payak",
+            "Petchmorakot", "Phanuwat", "Piyapong", "Pongsiri", "Prakasit",
+            "Pravit", "Preecha", "Rungravee", "Sakmongkol", "Samransak",
+            "Sarawut", "Seksan", "Somluck", "Songchai", "Sorasak",
+            "Suchart", "Sudsakorn", "Suriya", "Teerapong", "Thakoon",
+            "Thanet", "Veeraphol", "Wichan", "Worapon", "Yodlekpet",
+            "Yodsaenklai", "Yuttana",
         ],
         "last": [
             "Jitmuangnon", "Banchamek", "Kaiyanghadaow", "Lookboonmee",
@@ -344,6 +406,14 @@ _NAMES: dict[str, dict[str, list[str]]] = {
             "Rungrueang", "Kiatbusaba", "Aekwiboonwut", "Yodkhunpon",
             "Petchnamnak", "Thongpradit", "Chumphonburi", "Jaosuayai",
             "Sittipatthana", "Wongchai", "Rungnapa",
+            # matchmaking-audit session expansion (recycling co-requisite)
+            "Chormeechai", "Dejrat", "Kaewpadung", "Kiatsongrit",
+            "Lukbanyai", "Lukmingkwan", "Mahasarakham", "Nakhonthong",
+            "Petchrungruang", "Phetsimuang", "Pinyo", "Rachanon",
+            "Sakhomsin", "Silapathai", "Singpatong", "Sitkaew", "Sitniwat",
+            "Sitpholek", "Sitsongpeenong", "Sorjortong", "Srisaket",
+            "Teeded", "Yodying", "Kietpetch", "Lukprakhon", "Sitjemam",
+            "Wor Wanchai", "Petchkiatpetch", "Singklongsi", "Lukchaomaesai",
         ],
     },
     "sea_mixed": {
@@ -358,6 +428,16 @@ _NAMES: dict[str, dict[str, list[str]]] = {
             "Wilfredo", "Arjan", "Danilo", "Roldan", "Herbert", "Rex",
             "Randy", "Elmer", "Nestor", "Ramon", "Boyet", "Alfie", "Rico",
             "Wesley", "Junard", "Toshio", "Hiroshi", "Kenji",
+            # matchmaking-audit session expansion (recycling co-requisite)
+            "Adrian", "Aldrin", "Angelo", "Arnel", "Bien", "Carlo",
+            "Cedric", "Chico", "Efren", "Emman", "Ernesto", "Ferdinand",
+            "Francis", "Froilan", "Gerardo", "Gilbert", "Harold", "Ismael",
+            "Janrey", "Jayson", "Joenel", "Jomar", "Julius", "Junrey",
+            "Lito", "Manny", "Marcelino", "Michael", "Noel", "Onyok",
+            "Paolo", "Patricio", "Renz", "Rey", "Ricky", "Rodel",
+            "Rogelio", "Rolando", "Ronnie", "Roque", "Sonny", "Teodoro",
+            "Vic", "Virgilio", "Zaldy", "Binh", "Cuong", "Dat", "Hieu",
+            "Khanh", "Long", "Phuc", "Quan", "Tuan", "Vinh",
         ],
         "last": [
             "Folayang", "Striegl", "Sangiao", "Fernandes", "Nguyen", "Tran",
@@ -368,6 +448,14 @@ _NAMES: dict[str, dict[str, list[str]]] = {
             "Aldeguer", "Bulacan", "Catalan", "Dagplas", "Estrada", "Fabroa",
             "Gascon", "Hernandez", "Ilagan", "Jamora", "Kadena", "Lacson",
             "Manalo", "Navarro", "Ochoa", "Pineda",
+            # matchmaking-audit session expansion (recycling co-requisite)
+            "Abad", "Alcantara", "Bautista", "Belingon", "Cagas", "Canete",
+            "Casimero", "Concepcion", "Dela Cruz", "Diaz", "Donaire",
+            "Eustaquio", "Gaballo", "Gonzales", "Jaafar", "Kingad", "Lausa",
+            "Magsayo", "Malinao", "Mangubat", "Nietes", "Olivarez",
+            "Pacatiw", "Paculba", "Pagara", "Ramirez", "Reyes", "Salvador",
+            "Sanchez", "Santiago", "Taduran", "Tolentino", "Velasco",
+            "Vergara", "Villanueva", "Yodbua",
         ],
     },
 }
@@ -376,11 +464,63 @@ _NAMES: dict[str, dict[str, list[str]]] = {
 # Per-region seen-name sets -- populated by regional_name(), cleared by reset_name_registry().
 _used_names: dict[str, set[str]] = {t: set() for t in _NAMES}
 
+# ── Name recycling (matchmaking-audit session) ───────────────────────────────
+# Root-cause fix for pool exhaustion (the pool exhausted at ~fight #7500 of a
+# 50-sim-year run even AFTER the 2026-07-13 3x expansion): a retired/cut
+# fighter's name returns to the available pool once BOTH hold:
+#   1. NAME_RECYCLE_COOLDOWN_DAYS have passed since the fighter was removed;
+#   2. no ACTIVE record still references the name -- i.e. it is not the name
+#      of any active fighter and does not appear as opponent_name in any
+#      active fighter's fight_history. (Post-sim archival logs -- title
+#      history, cut log -- keep their historical rows; a name reappearing
+#      across ERAS there is normal sports reality, not a collision. The
+#      collision that matters is two contemporaneous fighters, or a live
+#      fight-history link resolving to the wrong person -- several systems
+#      match opponents BY NAME, so recycling a still-referenced name would
+#      silently graft the old fighter's pairing/quality history onto the new
+#      one. The referenced-names check makes that impossible by construction.)
+#
+# release_name() is called by cuts.execute_removal (the single shared
+# removal path for cuts AND retirements); recycle_names() is swept quarterly
+# by career/replenishment.py's backstop scan, which is the one caller with
+# the whole active population in hand to build the referenced-names set.
+
+NAME_RECYCLE_COOLDOWN_DAYS: int = 365
+
+_retired_names: dict[str, list[tuple[str, int]]] = {t: [] for t in _NAMES}
+
+
+def release_name(template_name: str, name: str, sim_day: int) -> None:
+    """Queue a removed fighter's name for eventual recycling. Safe no-op for
+    unknown templates/names (e.g. test fixtures that never registered)."""
+    if template_name in _retired_names and name in _used_names.get(template_name, set()):
+        _retired_names[template_name].append((name, sim_day))
+
+
+def recycle_names(referenced_names: set[str], current_day: int) -> int:
+    """Return queued names to the available pool once cooled down and no
+    longer referenced by any active record (see block comment above).
+    Returns how many names were recycled this sweep."""
+    recycled = 0
+    for template, queue in _retired_names.items():
+        keep: list[tuple[str, int]] = []
+        for name, day in queue:
+            if current_day - day < NAME_RECYCLE_COOLDOWN_DAYS or name in referenced_names:
+                keep.append((name, day))
+            else:
+                _used_names[template].discard(name)
+                recycled += 1
+        queue[:] = keep
+    return recycled
+
 
 def reset_name_registry() -> None:
-    """Clear all per-region seen-name sets. Call at the start of each new simulation."""
+    """Clear all per-region seen-name sets and recycle queues. Call at the
+    start of each new simulation."""
     for s in _used_names.values():
         s.clear()
+    for q in _retired_names.values():
+        q.clear()
 
 
 def regional_name(template_name: str) -> str:

@@ -166,6 +166,18 @@ RETIRE_INACTIVE_GAP_DAYS: int = 365
 """A fighter whose most recent stamped fight is this many days in the past is
 considered inactive and becomes eligible for retirement evaluation."""
 
+CHAMPION_INACTIVE_GAP_DAYS: int = 1095
+"""Reigning champions get a much longer leash than RETIRE_INACTIVE_GAP_DAYS
+before the inactive scan will evaluate them -- their gaps are usually just
+title-defense scheduling (tier4 defenses average ~310 days apart; small-org
+tier1/tier2 belts run slower still). But the old behavior of skipping
+champions ENTIRELY made an unlucky champion immortal: excluded from ordinary
+matchmaking by design, never defending because their org pool's title
+counter crawled, and never retirement-evaluated -- a mid-major champion was
+observed frozen for 53 sim-years (matchmaking-audit session). Three years
+without a single defense is genuine inactivity, not scheduling; the normal
+age-gated evaluation applies (execute_removal vacates the belt if they go)."""
+
 _last_inactive_scan_day: int = 0
 
 
@@ -205,19 +217,32 @@ def maybe_retire_inactive(
     for fighter in all_fighters:
         if is_removed(fighter.fighter_id):
             continue
+        gap_threshold = RETIRE_INACTIVE_GAP_DAYS
         if is_champion(fighter):
             # A reigning champion's only fights are scheduled title defenses
             # (matchmaking.py excludes them from ordinary matchmaking), so a
-            # long calendar gap since their last fight is an artifact of that,
-            # not genuine inactivity -- don't let this scan sweep them into
-            # Path 2's age-decline retirement roll for it. They can still
-            # retire normally (including the honorable Path 3) whenever they
-            # do fight, via maybe_evaluate_retirement.
-            continue
+            # MODERATE calendar gap is a scheduling artifact, not genuine
+            # inactivity -- but an unconditional skip here made champions
+            # immortal (see CHAMPION_INACTIVE_GAP_DAYS). Champions are only
+            # evaluated after that much longer threshold; if one retires,
+            # execute_removal vacates the belt as usual.
+            gap_threshold = CHAMPION_INACTIVE_GAP_DAYS
         last = _last_stamped_day(fighter)
         if last is None:
-            continue   # no stamped history -- skip (not a stale career, just unmatched)
-        if days_since(last) < RETIRE_INACTIVE_GAP_DAYS:
+            # Never had a real (stamped) fight. This USED to be an
+            # unconditional skip -- which made never-matched fighters
+            # immortal: the fight-count-cadenced maybe_evaluate_retirement
+            # never fires at n=0 fights, and this scan was the only other
+            # exit path. Measured (7000-attempt seed-42 baseline): 100
+            # active fighters had existed 10+ years without a single fight,
+            # including day-0 originals still "active" at age 58+ purely
+            # because nothing could ever retire them. Anchor on created_day
+            # instead: a long-unmatched fighter still faces the same
+            # age-gated three-path evaluation as everyone else (all paths
+            # are no-ops until past prime, so a young waiting prospect is
+            # untouched -- exactly the original comment's concern).
+            last = fighter.created_day
+        if days_since(last) < gap_threshold:
             continue   # still within the activity window
         reason = _retirement_reason(fighter)
         if reason:

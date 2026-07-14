@@ -154,6 +154,28 @@ class Fighter:
     # cooldown/soft-weight penalty.
     pending_rematch_opponent_name: str = ""
 
+    # Sim day this fighter was generated (0 for the initial population;
+    # replenishment/inflow fighters get the day they spawned). Diagnostic
+    # anchor for "how long has this fighter existed without a real fight" --
+    # fight_history alone can't distinguish a never-matched veteran of the
+    # initial population from a prospect spawned last quarter.
+    created_day: int = 0
+
+    # Cached sim_day of the most recent REAL (stamped) fight, maintained by
+    # engine/fight.py at result-append time; -1 = no real fight yet. Purely a
+    # cache over real_fight_history's max sim_day so the idle-weighted
+    # fighter-A draw (sim.py) doesn't rescan every fighter's history every
+    # attempt. Idle anchor = max(created_day, last_real_fight_day).
+    last_real_fight_day: int = -1
+
+    # Consecutive main-loop cycles where this fighter was drawn as fighter A
+    # but pick_opponent returned None (opponent-avoidance left no eligible
+    # candidate). Incremented by the caller on each such skip, reset to 0 on
+    # any successful booking. Read by pick_opponent's avoidance layer to
+    # progressively relax the COOLDOWN (never the lifetime hard cap) so a
+    # fighter can't lose cycle after cycle with no escalating priority.
+    avoid_skip_streak: int = 0
+
     fight_history: list[FightResult] = field(default_factory=list)
     labels: set[str] = field(default_factory=set)
 

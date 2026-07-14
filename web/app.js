@@ -164,35 +164,40 @@ function render() {
 }
 
 function renderTitlesSection() {
+  // Top-tier (tier4) belts only -- Apex FC / The League / Eastern Grand Prix.
+  // The backend registry also tracks regional/mid-major/"Top-org btm-15"
+  // belts for internal mechanics (scout-notice signals, retention logic),
+  // but those aren't a recognizable championship concept worth surfacing --
+  // the old version listed all ~24 slots per division, including a
+  // "Top-org btm-15" belt tier that isn't a real distinction.
   const byWc = new Map();
   for (const key of Object.keys(SNAPSHOT.titles)) {
     const t = SNAPSHOT.titles[key];
-    if (!t.champion_id) continue;
+    if (t.tier !== "tier4") continue;
     if (!byWc.has(t.weight_class)) byWc.set(t.weight_class, []);
     byWc.get(t.weight_class).push(t);
   }
 
   const sections = weightClasses().map(wc => {
-    const list = byWc.get(wc) || [];
+    const list = (byWc.get(wc) || []).filter(t => t.champion_id);
     if (!list.length) {
-      return `<h3>${humanize(wc)}</h3><p class="empty-note">No titles awarded yet in this division.</p>`;
+      return `<h3>${humanize(wc)}</h3><p class="empty-note">No top-tier titles awarded yet in this division.</p>`;
     }
-    list.sort((a, b) => TIER_ORDER.indexOf(a.tier) - TIER_ORDER.indexOf(b.tier) || (a.org || "").localeCompare(b.org || ""));
+    list.sort((a, b) => (a.org || "").localeCompare(b.org || ""));
     const rows = list.map(t => `<tr>
-        <td>${tierLabel(t.tier)}</td>
         <td>${t.org ? orgLink(t.org) : "—"}</td>
         <td>${fighterLink(t.champion_id, t.champion_name)}</td>
       </tr>`).join("\n");
     return `<h3>${humanize(wc)}</h3>
       <table class="wikitable">
-        <thead><tr><th>Tier</th><th>Org</th><th>Champion</th></tr></thead>
+        <thead><tr><th>Organization</th><th>Champion</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>`;
   }).join("\n");
 
   return `<section id="titles" class="section-block">
     <h2>Titles</h2>
-    <p>Current champions across every title-bearing tier and organization.</p>
+    <p>Current world champions of the three top-tier organizations.</p>
     ${sections}
   </section>`;
 }
@@ -370,18 +375,24 @@ function renderFightersTable() {
 }
 
 function renderFightersSection() {
-  const wcOptions = ['<option value="">All weight classes</option>']
-    .concat(weightClasses().map(wc => `<option value="${wc}">${humanize(wc)}</option>`))
+  // Rehydrate the controls from the persisted filter state -- render() runs
+  // on every /advance and used to recreate these controls EMPTY while the
+  // persisted fightersSearch/fightersWcFilter/fightersTierFilter state kept
+  // filtering the table, so after advancing, the table stayed filtered by a
+  // query the controls no longer displayed.
+  const sel = (v, cur) => (v === cur ? " selected" : "");
+  const wcOptions = [`<option value=""${sel("", fightersWcFilter)}>All weight classes</option>`]
+    .concat(weightClasses().map(wc => `<option value="${wc}"${sel(wc, fightersWcFilter)}>${humanize(wc)}</option>`))
     .join("");
-  const tierOptions = ['<option value="">All tiers</option>']
-    .concat(Object.keys(TIER_LABELS).map(t => `<option value="${t}">${TIER_LABELS[t]}</option>`))
+  const tierOptions = [`<option value=""${sel("", fightersTierFilter)}>All tiers</option>`]
+    .concat(Object.keys(TIER_LABELS).map(t => `<option value="${t}"${sel(t, fightersTierFilter)}>${TIER_LABELS[t]}</option>`))
     .join("");
 
   return `<section id="fighters" class="section-block">
     <h2>All Fighters</h2>
     <p>The full roster, searchable and sortable — click a column heading to sort by it.</p>
     <p class="fighters-controls">
-      <input type="text" id="fighters-search" placeholder="Search by name…" oninput="onFightersSearchInput(this.value)">
+      <input type="text" id="fighters-search" placeholder="Search by name…" value="${escapeHtml(fightersSearch)}" oninput="onFightersSearchInput(this.value)">
       <select id="fighters-wc-filter" onchange="onFightersFilterChange()">${wcOptions}</select>
       <select id="fighters-tier-filter" onchange="onFightersFilterChange()">${tierOptions}</select>
     </p>
@@ -577,11 +588,33 @@ document.getElementById("btn-init").addEventListener("click", e => { e.preventDe
 document.getElementById("btn-week").addEventListener("click", e => { e.preventDefault(); doAdvance("week"); });
 document.getElementById("btn-month").addEventListener("click", e => { e.preventDefault(); doAdvance("month"); });
 
+// Close the modal WITHOUT `location.hash = ""` -- assigning an empty hash
+// makes the browser scroll the document to the top, so returning from a
+// fighter/org detail view dumped the user back at the top of the page
+// instead of where they left the list. pushState strips the hash without
+// scrolling and without firing hashchange (so we invoke the modal check
+// ourselves), while keeping a history entry so the back button still
+// reopens the modal exactly like the old hash-clearing flow did.
+function closeModalPreservingScroll() {
+  if (!location.hash) return;
+  const x = window.scrollX, y = window.scrollY;
+  history.pushState("", document.title, location.pathname + location.search);
+  checkModalFromHash();
+  window.scrollTo(x, y);
+}
+
 document.getElementById("modal-overlay").addEventListener("click", e => {
-  if (e.target.id === "modal-overlay") location.hash = "";
+  if (e.target.id === "modal-overlay") closeModalPreservingScroll();
+});
+// The x button is an <a href="#"> -- without this handler it navigated to the
+// empty fragment, which browsers treat as "scroll to top" (same bug family as
+// the old location.hash = "" close path).
+document.getElementById("modal-close").addEventListener("click", e => {
+  e.preventDefault();
+  closeModalPreservingScroll();
 });
 document.addEventListener("keydown", e => {
-  if (e.key === "Escape") location.hash = "";
+  if (e.key === "Escape") closeModalPreservingScroll();
 });
 
 window.addEventListener("hashchange", checkModalFromHash);

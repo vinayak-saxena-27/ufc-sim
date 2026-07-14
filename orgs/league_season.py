@@ -58,7 +58,7 @@ from dataclasses import dataclass, field
 from career.fighter import Fighter
 from career.tiers import WEIGHT_CLASSES
 from engine.fight import simulate_fight
-from matchmaking import apply_tier_transitions
+from matchmaking import apply_tier_transitions, title_pairing_allowed, pairing_at_hard_cap
 from career.labels import maybe_update_labels, award_title
 from career.development import apply_win_development_boost, apply_phase_development_feedback
 from career.hype import (
@@ -213,10 +213,35 @@ def _run_playoffs(
     champion_name: str | None = None
 
     if len(seeds) >= 4:
-        w1, l1 = _run_one_fight(seeds[0], seeds[3], pools, fight_num, sim_day, all_fighters,
+        # Hard-cap guard (matchmaking-audit session): playoff pairings are
+        # earned bracket positions, so the avoidance COOLDOWN doesn't apply --
+        # but the lifetime hard cap (AVOID_HARD_CAP meetings, no exceptions
+        # anywhere) still does. Standard bracket is 1v4/2v3; if either semi
+        # would exceed the cap, try the two alternate pairings of the same
+        # four seeds before giving up on the bracket entirely.
+        bracket = None
+        for (i1, j1), (i2, j2) in (((0, 3), (1, 2)), ((0, 2), (1, 3)), ((0, 1), (2, 3))):
+            if not pairing_at_hard_cap(seeds[i1], seeds[j1]) \
+               and not pairing_at_hard_cap(seeds[i2], seeds[j2]):
+                bracket = ((i1, j1), (i2, j2))
+                break
+        if bracket is None:
+            print(f"[LEAGUE] {wc} Season {season_num} -- every semifinal "
+                  f"arrangement is at the lifetime pairing cap; season ends "
+                  f"without playoffs.")
+            _season_history.append(LeagueSeasonRecord(
+                weight_class=wc, season_number=season_num,
+                top_scorers=top_scorers, semifinal_results=[],
+                final_result=None, champion_name=None,
+            ))
+            _season_points[wc] = {}
+            _season_number[wc] = season_num + 1
+            return
+        (i1, j1), (i2, j2) = bracket
+        w1, l1 = _run_one_fight(seeds[i1], seeds[j1], pools, fight_num, sim_day, all_fighters,
                                  is_final=False, playoff_stage=True)
         semifinal_results.append((w1.name, l1.name, w1.fight_history[-1].method))
-        w2, l2 = _run_one_fight(seeds[1], seeds[2], pools, fight_num, sim_day, all_fighters,
+        w2, l2 = _run_one_fight(seeds[i2], seeds[j2], pools, fight_num, sim_day, all_fighters,
                                  is_final=False, playoff_stage=True)
         semifinal_results.append((w2.name, l2.name, w2.fight_history[-1].method))
         # A semifinal winner can retire/get cut in _run_one_fight's own post-fight
@@ -231,12 +256,20 @@ def _run_playoffs(
             print(f"[LEAGUE] {wc} Season {season_num} -- a semifinal winner "
                   f"retired/was cut before the final could run; season ends "
                   f"without a crowned champion.")
+        elif pairing_at_hard_cap(w1, w2):
+            # Same hard-cap guard as the semis -- a 4th lifetime meeting never
+            # happens, even for a championship final. No champion this season.
+            print(f"[LEAGUE] {wc} Season {season_num} -- finalists are at the "
+                  f"lifetime pairing cap; season ends without a crowned champion.")
         else:
             champ, runner_up = _run_one_fight(w1, w2, pools, fight_num, sim_day, all_fighters,
                                                is_final=True, playoff_stage=True)
             final_result = (champ.name, runner_up.name, champ.fight_history[-1].method)
             champion_name = champ.name
             print(f"[LEAGUE] {wc} Season {season_num} CHAMPION -- {champ.name}!")
+    elif len(seeds) >= 2 and pairing_at_hard_cap(seeds[0], seeds[1]):
+        print(f"[LEAGUE] {wc} Season {season_num} -- thin-pool finalists are at "
+              f"the lifetime pairing cap; season ends without a crowned champion.")
     elif len(seeds) >= 2:
         # Thin pool: skip straight to a final between the top two scorers.
         champ, runner_up = _run_one_fight(seeds[0], seeds[1], pools, fight_num, sim_day, all_fighters,
@@ -283,7 +316,30 @@ def run_league_season(
     if len(pool) < 2:
         return   # thin pool this cycle -- try again next tick
 
-    fa, fb = random.sample(pool, 2)
+    # Opponent-avoidance (matchmaking-audit session). This scheduler used a
+    # plain random.sample(pool, 2) with no avoidance at all -- the ONLY fight
+    # path in the sim that bypassed it, and measurably the only source of
+    # over-cap repeat pairings (a 4-meeting league_season pair in the
+    # 7000-attempt seed-42 baseline; every other path maxed at 3). Same
+    # hard-cap + cooldown rule as title.py's pairing (title_pairing_allowed,
+    # exemptions disabled -- the title-rematch exception is a belt-defense
+    # concept with no analog in a round-robin season). The ranked-opponent
+    # eligibility gate is deliberately NOT applied here: a season format
+    # matches everyone against everyone by design, so the continuous-
+    # matchmaking "proving period" concept doesn't transfer.
+    fa_order = list(pool)
+    random.shuffle(fa_order)
+    fa = fb = None
+    for cand in fa_order:
+        allowed = [f for f in pool
+                   if f is not cand
+                   and title_pairing_allowed(cand, f, sim_day, allow_exemption=False)]
+        if allowed:
+            fa, fb = cand, random.choice(allowed)
+            break
+    if fa is None:
+        return   # every possible pairing capped/cooling down -- skip this tick
+
     winner, loser = _run_one_fight(fa, fb, pools, fight_num, sim_day, all_fighters,
                                     is_final=False, playoff_stage=False)
     _award_points(winner.fighter_id, wc, won=True, method=winner.fight_history[-1].method)

@@ -8,7 +8,7 @@ from career.tiers import TIER_LEVELS
 from career.academy_reputation import get_effective_pipeline_strength
 from career.rankings import is_eligible_vs_ranked, get_ranked_ids, get_rankings, RANKINGS_SIZE, drop_from_rankings_cache
 from career.org_rankings import get_org_ranked_ids, get_org_rankings, drop_from_org_rankings_cache
-from career.labels import is_champion
+from career.labels import is_champion, vacate_title
 from orgs.org_registry import assign_org, assign_midmajor_org, assign_regional_org, capture_midmajor_feed
 from sim_calendar import get_sim_day
 
@@ -209,13 +209,28 @@ _elite_pairings: list[ElitePairingRecord] = []
 
 
 def reset_elite_pairings() -> None:
-    """Clear the Elite pairing log.  Call at sim start."""
+    """Clear the Elite pairing log and the discovery pick log. Call at sim start."""
     _elite_pairings.clear()
+    _discovery_picks.clear()
 
 
 def get_elite_pairings() -> list[ElitePairingRecord]:
     """Return all logged Elite pairings since last reset."""
     return list(_elite_pairings)
+
+
+# ── Discovery pick log (selection-fairness diagnostics) ──────────────────────
+# Every fighter pick_discovery_a returns is recorded here so a post-run audit
+# can check the discovery slot isn't repeatedly going to the same subset of
+# under-fought fighters while others never get it. Pure logging -- consumes
+# no RNG, changes no behavior. Cleared by reset_elite_pairings() (same
+# lifecycle as the pairing log above).
+
+_discovery_picks: list[str] = []   # fighter_ids, in pick order
+
+
+def get_discovery_picks() -> list[str]:
+    return list(_discovery_picks)
 
 
 def _proximity_pick(
@@ -470,7 +485,9 @@ def pick_discovery_a(
         if f.org == org and not is_champion(f)
         and _tier4_fight_count(f) < ELITE_DISCOVERY_MAX_FIGHTS
     ]
-    return random.choice(underfought_in_org)
+    pick = random.choice(underfought_in_org)
+    _discovery_picks.append(pick.fighter_id)
+    return pick
 
 
 # ── Opponent-avoidance helpers ────────────────────────────────────────────────
@@ -493,7 +510,15 @@ def _meeting_count(fighter: Fighter, opponent: Fighter) -> int:
 def _cooldown_cleared(fighter: Fighter, opponent: Fighter, current_day: int) -> bool:
     """True if both AVOID_COOLDOWN_DAYS and AVOID_COOLDOWN_FIGHTS have
     cleared since fighter's last real meeting with opponent (or they've never
-    met). See AVOID_COOLDOWN_DAYS/AVOID_COOLDOWN_FIGHTS for why both gate."""
+    met). See AVOID_COOLDOWN_DAYS/AVOID_COOLDOWN_FIGHTS for why both gate.
+
+    Skip-compounding escalation: both thresholds shrink by a factor of
+    (1 + fighter.avoid_skip_streak). A fighter whose LAST cycle(s) were
+    skipped because avoidance left zero eligible opponents (thin pool, all
+    candidates cooling down) gets a progressively shorter cooldown next
+    cycle instead of losing cycle after cycle with no memory of it -- and
+    the streak resets to 0 the moment they get booked (sim.py). The
+    lifetime hard cap is NEVER relaxed (see _avoidance_hard_ok)."""
     real_hist = fighter.real_fight_history
     last_idx = _last_meeting_index(fighter, opponent)
     if last_idx is None:
@@ -501,7 +526,9 @@ def _cooldown_cleared(fighter: Fighter, opponent: Fighter, current_day: int) -> 
     last_meeting = real_hist[last_idx]
     days_since = (current_day - last_meeting.sim_day) if last_meeting.sim_day >= 0 else 10**9
     fights_since = len(real_hist) - 1 - last_idx
-    return days_since >= AVOID_COOLDOWN_DAYS and fights_since >= AVOID_COOLDOWN_FIGHTS
+    relax = 1 + max(0, fighter.avoid_skip_streak)
+    return (days_since >= AVOID_COOLDOWN_DAYS / relax
+            and fights_since >= AVOID_COOLDOWN_FIGHTS / relax)
 
 
 def _repeat_penalty(fighter: Fighter, opponent: Fighter, current_day: int) -> float:
@@ -536,6 +563,15 @@ def _avoidance_hard_ok(
     if candidate.name == exempt_name:
         return True
     return _cooldown_cleared(fighter, candidate, current_day)
+
+
+def pairing_at_hard_cap(fighter: Fighter, candidate: Fighter) -> bool:
+    """True if these two have already met AVOID_HARD_CAP times in real fights
+    -- the one avoidance layer that applies with NO exceptions anywhere,
+    including structurally-seeded bouts (League playoff brackets) that are
+    otherwise exempt from the cooldown/soft-weight layers because their
+    pairings are earned, not matchmade."""
+    return _meeting_count(fighter, candidate) >= AVOID_HARD_CAP
 
 
 def title_pairing_allowed(
@@ -605,11 +641,15 @@ def pick_opponent(
     # A champion's only fights are scheduled title defenses -- they can't be
     # drawn as an ordinary opponent either. Per-candidate check (not a single
     # shared champion id) since tier1/tier2 pools span multiple orgs, each
-    # with their own belt. Falls back to the unfiltered set in thin pools
-    # rather than risk an empty candidate list.
-    non_champ_candidates = [f for f in candidates if not is_champion(f)]
-    if non_champ_candidates:
-        candidates = non_champ_candidates
+    # with their own belt. This is now a HARD exclusion (matchmaking-audit
+    # session): the old thin-pool fallback to the unfiltered set let a
+    # reigning champion absorb ordinary losses as fighter B, which is one of
+    # the ways an "active champion" could carry a degrading record while
+    # holding the belt. An all-champions candidate list now skips the cycle
+    # (return None -- same contract as the avoidance skip below).
+    candidates = [f for f in candidates if not is_champion(f)]
+    if not candidates:
+        return None
 
     # ── Org hard-partition (Org Identity session) ────────────────────────────
     # Top-tier orgs are separate promotions, not a shared pool: a tier4 fighter's
@@ -772,7 +812,28 @@ def apply_tier_transitions(
     wc  = fighter.weight_class
     idx = TIER_LEVELS.index(fighter.tier)
 
+    def _vacate_if_champion(direction: str) -> None:
+        # Explicit belt resolution on tier change (matchmaking-audit session).
+        # Previously a champion who transitioned tiers took nothing with them
+        # but left the belt registry pointing at their id under the OLD tier
+        # key -- title.py only discovered it cycles later when a scheduled
+        # defense found no matching fighter in the pool ("VACANT (champ
+        # gone)"), and until then the orphaned belt made its holder invisible
+        # to is_champion() (which checks the CURRENT tier), so an "active
+        # champion" could take ordinary fights, lose them, and still show as
+        # champion. Measured at baseline: a 2-3-record reigning tier1 champ
+        # existed via exactly this path. Weight-class moves already resolve
+        # this explicitly (weight_transfers._execute_move); tier transitions
+        # now do the same.
+        if is_champion(fighter):
+            _org = fighter.org if fighter.tier in ("tier1", "tier2", "tier4") else ""
+            vacate_title(wc, fighter.tier, _org)
+            tag = f" ({_org})" if _org else ""
+            print(f"[TITLE] {fighter.name} vacates the {wc} {fighter.tier}{tag} "
+                  f"belt ({direction} out of the division's tier)")
+
     if idx < len(TIER_LEVELS) - 1 and check_promotion(fighter):
+        _vacate_if_champion("promoted")
         pools[wc][fighter.tier].remove(fighter)
         fighter.tier = TIER_LEVELS[idx + 1]
         pools[wc][fighter.tier].append(fighter)
@@ -790,6 +851,7 @@ def apply_tier_transitions(
         return fighter.tier
 
     if idx > 0 and check_demotion(fighter):
+        _vacate_if_champion("demoted")
         was_tier4 = fighter.tier == "tier4"
         pools[wc][fighter.tier].remove(fighter)
         fighter.tier = TIER_LEVELS[idx - 1]
