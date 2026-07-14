@@ -220,6 +220,15 @@ def execute_removal(
         title_vacated = True
 
     _removed_fighter_ids.add(fighter.fighter_id)
+
+    # Queue the name for recycling (career/academies.py) -- it only actually
+    # returns to the pool after a cooldown AND once no active record still
+    # references it (replenishment.py's quarterly sweep checks both). Local
+    # imports avoid a cuts.py <-> academies/sim_calendar load-order edge.
+    from career.academies import release_name
+    from sim_calendar import get_sim_day
+    release_name(fighter.template, fighter.name, get_sim_day())
+
     rec = CutRecord(
         fight_num     = fight_num,
         fighter_name  = fighter.name,

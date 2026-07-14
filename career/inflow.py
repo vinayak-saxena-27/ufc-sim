@@ -25,10 +25,11 @@ from statistics import mean as _mean
 
 from career.fighter import Fighter
 from career.templates import TEMPLATES, _TEMPLATE_REGIONS
-from career.tiers import TIER_CONFIG, ATTR_NOISE_STD
+from career.tiers import TIER_CONFIG, ATTR_NOISE_STD, generate_presim_history
 from career.academies import pick_academy, regional_name
 from career.development import assign_prospect_tier
 from career.hype import generate_hype_seed
+from sim_calendar import get_sim_day
 
 
 # ── Crossover sport profiles ──────────────────────────────────────────────────
@@ -249,25 +250,33 @@ def generate_crossover(weight_class: str) -> tuple[Fighter, str, str]:
         academy=f"[Crossover: {_SPORT_LABELS[sport]}]",
         prospect_tier=prospect_tier,
         hype=hype,
+        created_day=get_sim_day(),
         **attrs,
     )
+    # NOTE: crossovers deliberately get NO presim MMA record -- their career
+    # so far happened in the other sport, so an empty MMA fight_history at
+    # age 28+ is the plausible state here (unlike laterals below).
+    #
     # Org Identity sessions: crossovers/laterals construct Fighter directly
     # (not via career.tiers.generate_tier_fighter), so they were missed by
     # Session A/B1's generation-time org-assignment hooks until now. A
     # recreational-caliber crossover lands at tier1; transcendent CAN land
     # straight at tier2/tier4 (Session B2 added the tier1 case).
+    # org_start_day was previously hardcoded 0 here -- a real bug for a
+    # mid-run arrival (day-15000 signee read as maximally tenured by
+    # org_movement's MIN_TENURE_BEFORE_POACH gate); stamp the actual day.
     if tier_key == "tier1":
         from orgs.org_registry import assign_regional_org
         assign_regional_org(fighter)
-        fighter.org_start_day = 0
+        fighter.org_start_day = get_sim_day()
     elif tier_key == "tier2":
         from orgs.org_registry import assign_midmajor_org
         assign_midmajor_org(fighter)
-        fighter.org_start_day = 0
+        fighter.org_start_day = get_sim_day()
     elif tier_key == "tier4":
         from orgs.org_registry import assign_org
         assign_org(fighter)
-        fighter.org_start_day = 0
+        fighter.org_start_day = get_sim_day()
     return fighter, sport, caliber
 
 
@@ -368,18 +377,27 @@ def generate_lateral(weight_class: str) -> tuple[Fighter, str]:
         academy=academy.name,
         prospect_tier=prospect_tier,
         hype=hype,
+        created_day=get_sim_day(),
         **attrs,
     )
+    # A lateral is by definition an ESTABLISHED MMA fighter arriving from
+    # another org -- backfill the career their age implies, exactly like
+    # generate_tier_fighter does. Previously skipped (matchmaking-audit
+    # session): a 31-year-old tier4 lateral arrived with a 0-fight career,
+    # the exact age-vs-record implausibility the presim feature exists to
+    # prevent. Crossovers (above) stay history-less on purpose.
+    generate_presim_history(fighter)
+    # org_start_day: same hardcoded-0 bug as generate_crossover -- see there.
     if tier_key == "tier1":
         from orgs.org_registry import assign_regional_org
         assign_regional_org(fighter)
-        fighter.org_start_day = 0
+        fighter.org_start_day = get_sim_day()
     elif tier_key == "tier2":
         from orgs.org_registry import assign_midmajor_org
         assign_midmajor_org(fighter)
-        fighter.org_start_day = 0
+        fighter.org_start_day = get_sim_day()
     elif tier_key == "tier4":
         from orgs.org_registry import assign_org
         assign_org(fighter)
-        fighter.org_start_day = 0
+        fighter.org_start_day = get_sim_day()
     return fighter, tier_key

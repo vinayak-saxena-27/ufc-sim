@@ -159,9 +159,19 @@ def generate_presim_history(fighter: Fighter) -> None:
     should already have a career behind them.
 
     Win probability per backfilled fight reuses engine.fight.SCALE's exact
-    calibration against a flat "league-average" opponent (overall=0.0) -- the
-    same zero-centered baseline every tier's power level is already defined
-    against, not a new, separately-tuned heuristic.
+    calibration, graded against an opponent baseline that RAMPS from the
+    amateur tier center (their assumed debut competition) up to the
+    fighter's own current tier center (their peers today) across the
+    backfilled career. The original flat "league-average" (overall=0.0)
+    baseline mis-graded both ends of the pyramid (matchmaking-audit
+    session, measured on a fresh 1320-fighter generation): a tier0 amateur
+    (center -35) won only ~13% of backfilled fights because every fight was
+    scored against opposition 35 points better than anyone they'd plausibly
+    have faced, so 24% of ALL fighters started with losing records
+    (concentrated at low tiers); tier4 elites won ~92% (fair fights vs
+    peers are closer to a coin flip). The ramp models the real shape: a
+    climber dominates early weak competition, then wins closer to 50% as
+    the opposition catches up to their level.
 
     Every backfilled FightResult uses weight_class="" and the default
     sim_day=-1 -- the SAME convention this codebase already uses for
@@ -177,11 +187,15 @@ def generate_presim_history(fighter: Fighter) -> None:
     if n_fights <= 0:
         return
 
-    win_p = 1.0 / (1.0 + 10.0 ** (-(fighter.overall - 0.0) / SCALE))
     methods = list(_PRESIM_METHOD_WEIGHTS.keys())
     method_weights = list(_PRESIM_METHOD_WEIGHTS.values())
 
-    for _ in range(n_fights):
+    start_baseline = TIER_CONFIG["tier0"].center
+    end_baseline   = TIER_CONFIG.get(fighter.tier, TIER_CONFIG["tier0"]).center
+    for i in range(n_fights):
+        frac = i / max(1, n_fights - 1)
+        opp_baseline = start_baseline + frac * (end_baseline - start_baseline)
+        win_p = 1.0 / (1.0 + 10.0 ** (-(fighter.overall - opp_baseline) / SCALE))
         outcome = "win" if random.random() < win_p else "loss"
         fighter.fight_history.append(FightResult(
             opponent_name="Uncredited Opponent",
@@ -246,6 +260,9 @@ def generate_tier_fighter(
     }
     _ap = _age_params.get(tier_key, (27.0, 4.0, 18, 42))
     age = max(_ap[2], min(_ap[3], int(random.gauss(_ap[0], _ap[1]))))
+    # Local import (same pattern as the org assignments below) -- avoids a
+    # tiers.py <-> sim_calendar import-order dependency at module load.
+    from sim_calendar import get_sim_day
     fighter = Fighter(
         name=regional_name(template_name),
         age=age,
@@ -258,6 +275,7 @@ def generate_tier_fighter(
         hype=generate_hype_seed(academy.pipeline_strength),
         cut_severity=generate_cut_severity(attrs["power"], attrs["athleticism"], weight_class),
         style_flexibility=generate_style_flexibility(attrs["fight_iq"], template_name),
+        created_day=get_sim_day(),
         **attrs,
     )
     generate_presim_history(fighter)
