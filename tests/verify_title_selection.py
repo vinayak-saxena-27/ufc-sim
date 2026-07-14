@@ -107,6 +107,8 @@ for i in range(N_FIGHTS):
         b = pick_opponent(a, pools)
     except IndexError:
         continue
+    if b is None:
+        continue
 
     _run_fight_cycle(a, b, fight_num=total_fight_idx + 1)
     total_fight_idx += 1
@@ -125,8 +127,8 @@ for i in range(N_FIGHTS):
             try:
                 be = pick_opponent(ae, pools)
             except IndexError:
-                pass
-            else:
+                be = None
+            if be is not None:
                 _run_fight_cycle(ae, be, fight_num=total_fight_idx + 1)
                 total_fight_idx += 1
                 if total_fight_idx % RANKINGS_UPDATE_INTERVAL == 0:

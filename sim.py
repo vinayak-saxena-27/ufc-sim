@@ -207,6 +207,10 @@ def _run_additive_elite_fight(
         _be = pick_opponent(fighter_a, pools)
     except IndexError:
         return
+    if _be is None:
+        # Opponent-avoidance left no eligible non-repeat candidate -- skip
+        # this additively-injected fight rather than force a repeat.
+        return
     _ewc, _etier, _eday = fighter_a.weight_class, fighter_a.tier, get_sim_day()
     _eorg = fighter_a.org if _etier == "tier4" else ""
     _edecision_mode = decision_mode_for_org(_eorg) if _eorg else "total_score"
@@ -269,6 +273,10 @@ def _run_one_bout(
         b = pick_opponent(a, pools)
     except IndexError:
         # Division pool exhausted — skip this iteration rather than crash.
+        return False
+    if b is None:
+        # Opponent-avoidance left no eligible non-repeat candidate this cycle
+        # (matchmaking.AVOID_* constants) -- skip rather than force a repeat.
         return False
 
     # Capture tier+wc(+org) before transitions — title scheduling uses the

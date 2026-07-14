@@ -214,6 +214,8 @@ random.seed(42)
 for _ in range(500):
     a = random.choice(all_fighters)
     b = pick_opponent(a, pools)
+    if b is None:
+        continue
     simulate_fight(a, b, org="general_sim")
 
     for fighter in (a, b):

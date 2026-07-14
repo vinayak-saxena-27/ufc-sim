@@ -199,6 +199,8 @@ def check_spot() -> bool:
             b = pick_opponent(a, pools)
         except IndexError:
             continue
+        if b is None:
+            continue
 
         fight_wc   = a.weight_class
         fight_tier = a.tier

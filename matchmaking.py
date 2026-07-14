@@ -21,6 +21,61 @@ DEMOTE_LOSSES_IN_LAST: int   = 4     # losses needed in the last DEMOTE_WINDOW t
 DEMOTE_WINDOW:         int   = 5     # rolling window size for demotion check (tiers 0-3)
 CROSS_TIER_RATE:       float = 0.12  # fraction of fights matched against an adjacent tier
 
+# ── Opponent-avoidance (repeat-matchup prevention) ───────────────────────────
+# Three stacked layers, real-world-matchmaking-shaped: a hard lifetime cap
+# (trilogies happen, tetralogies don't), a cooldown (not immediately), and a
+# soft penalty that tapers off (matchmaking doesn't casually reach for a
+# repeat, but doesn't forbid one once real time has passed). An explicit
+# title-rematch exception bypasses the cooldown/soft-weight (not the hard
+# cap) for one specific next booking after a controversial title loss.
+#
+# All pairing history is derived directly from Fighter.real_fight_history
+# (matched by opponent_name -- FightResult has no opponent_id field, and
+# academies.py's name registry guarantees names are unique for the life of a
+# sim run, so name-matching is safe here, same as several other systems
+# already rely on). No separate pairing-history registry is tracked --
+# deriving directly from real_fight_history means this is immune to the
+# presim-contamination bug class by construction, not by a parallel filter
+# that could drift out of sync with it.
+
+AVOID_HARD_CAP: int = 3
+"""Max lifetime meetings between any two fighters, ever -- no exceptions,
+including the title-rematch exception below (which governs the 2nd/3rd
+meeting, not an unlimited chain). Applies uniformly at every tier."""
+
+AVOID_COOLDOWN_DAYS:   int = 180
+AVOID_COOLDOWN_FIGHTS: int = 8
+"""A rebooking is blocked until BOTH clear: at least this many calendar days
+AND at least this many of the fighter's OWN real fights have passed since
+their last meeting with this specific opponent. Gating on both prevents a
+long-inactive fighter from getting an artificially short cooldown just
+because few fights happened, and prevents a very active fighter from getting
+an artificially short cooldown just because days passed quickly."""
+
+AVOID_MEMORY_WINDOW_DAYS: int = AVOID_COOLDOWN_DAYS * 2
+"""Soft-penalty taper window, counted from the SAME last-meeting day the
+cooldown uses. The penalty is steepest right as the cooldown lifts and
+relaxes linearly back to no penalty by the end of this window."""
+
+AVOID_SOFT_MIN: float = 0.3
+"""Rejection-sampling accept probability for a candidate right as their
+cooldown lifts (see _repeat_penalty) -- i.e. matchmaking still reaches for
+them ~30% as often as a fresh opponent at that instant, rising to 100% (no
+penalty) by AVOID_MEMORY_WINDOW_DAYS."""
+
+AVOID_MAX_REROLLS: int = 3
+"""Max rejection-sampling attempts to avoid a soft-penalized pick before just
+accepting whichever candidate was last drawn. Keeps the penalty probabilistic
+rather than a second hard filter -- a thin pool can still produce a "recent"
+opponent, just less often than an unpenalized draw would."""
+
+AVOID_REMATCH_SCORE_MARGIN: float = 2.0
+"""'Close/controversial decision' threshold for the title-rematch exception,
+on FightResult.score_margin. MMA judging is 10-9-style per round (see
+engine/fight_engine.py) -- a 3-round total sits in the high 20s, a 5-round
+total in the 40s-50s, so a 1-2 point margin is genuinely a could-have-gone-
+either-way scorecard, not a token threshold."""
+
 # Effect 2 (pipeline bias) -- direct promotion nudge.
 # Fighters one win short of the promotion threshold get a small probabilistic
 # second chance, scaled by their academy's pipeline_strength.
@@ -418,14 +473,84 @@ def pick_discovery_a(
     return random.choice(underfought_in_org)
 
 
+# ── Opponent-avoidance helpers ────────────────────────────────────────────────
+
+def _last_meeting_index(fighter: Fighter, opponent: Fighter) -> int | None:
+    """Index within fighter.real_fight_history of the most recent real fight
+    against opponent (matched by name), or None if they've never met in a
+    real (non-presim) fight."""
+    last_idx = None
+    for i, r in enumerate(fighter.real_fight_history):
+        if r.opponent_name == opponent.name:
+            last_idx = i
+    return last_idx
+
+
+def _meeting_count(fighter: Fighter, opponent: Fighter) -> int:
+    return sum(1 for r in fighter.real_fight_history if r.opponent_name == opponent.name)
+
+
+def _cooldown_cleared(fighter: Fighter, opponent: Fighter, current_day: int) -> bool:
+    """True if both AVOID_COOLDOWN_DAYS and AVOID_COOLDOWN_FIGHTS have
+    cleared since fighter's last real meeting with opponent (or they've never
+    met). See AVOID_COOLDOWN_DAYS/AVOID_COOLDOWN_FIGHTS for why both gate."""
+    real_hist = fighter.real_fight_history
+    last_idx = _last_meeting_index(fighter, opponent)
+    if last_idx is None:
+        return True
+    last_meeting = real_hist[last_idx]
+    days_since = (current_day - last_meeting.sim_day) if last_meeting.sim_day >= 0 else 10**9
+    fights_since = len(real_hist) - 1 - last_idx
+    return days_since >= AVOID_COOLDOWN_DAYS and fights_since >= AVOID_COOLDOWN_FIGHTS
+
+
+def _repeat_penalty(fighter: Fighter, opponent: Fighter, current_day: int) -> float:
+    """Soft rejection-sampling accept probability for opponent, given
+    fighter's last real meeting with them. 1.0 = no penalty (never met, or
+    fully past the memory window). Tapers linearly from AVOID_SOFT_MIN (right
+    as cooldown lifts) to 1.0 (end of AVOID_MEMORY_WINDOW_DAYS)."""
+    last_idx = _last_meeting_index(fighter, opponent)
+    if last_idx is None:
+        return 1.0
+    last_meeting = fighter.real_fight_history[last_idx]
+    if last_meeting.sim_day < 0:
+        return 1.0
+    days_since = current_day - last_meeting.sim_day
+    if days_since >= AVOID_MEMORY_WINDOW_DAYS:
+        return 1.0
+    if days_since <= AVOID_COOLDOWN_DAYS:
+        return AVOID_SOFT_MIN
+    frac = (days_since - AVOID_COOLDOWN_DAYS) / (AVOID_MEMORY_WINDOW_DAYS - AVOID_COOLDOWN_DAYS)
+    return AVOID_SOFT_MIN + frac * (1.0 - AVOID_SOFT_MIN)
+
+
+def _avoidance_hard_ok(
+    fighter: Fighter, candidate: Fighter, current_day: int, exempt_name: str,
+) -> bool:
+    """Hard filter: excludes a candidate at the lifetime cap or still inside
+    the cooldown window, unless `exempt_name` (a live title-rematch
+    exception) names this specific candidate -- which bypasses the cooldown
+    but never the hard cap (a 4th meeting never happens regardless)."""
+    if _meeting_count(fighter, candidate) >= AVOID_HARD_CAP:
+        return False
+    if candidate.name == exempt_name:
+        return True
+    return _cooldown_cleared(fighter, candidate, current_day)
+
+
 def pick_opponent(
     fighter: Fighter,
     pools: dict[str, dict[str, list[Fighter]]],
-) -> Fighter:
+) -> Fighter | None:
     """
     Selects an opponent with tier-constrained, division-partitioned matchmaking.
     ~88% of fights stay within the same tier; ~12% cross one tier up or down.
     Opponents are ALWAYS drawn from the same weight class — no cross-division fights.
+
+    Returns None if opponent-avoidance (see AVOID_* constants) would leave no
+    eligible candidate at all -- callers must treat this the same as the
+    existing exhausted-pool IndexError case (skip this fighter's fight for
+    this cycle rather than force a repeat matchup).
     """
     wc = fighter.weight_class
     own_idx = TIER_LEVELS.index(fighter.tier)
@@ -492,11 +617,53 @@ def pick_opponent(
             _gate_fallback += 1
             # Pool too small to enforce gate — allow any candidate (documented fallback)
 
-    # ── Elite sub-pool split + proximity weighting (Layers 2 + 3) ─────────────
-    if fighter.tier == "tier4" and opp_tier == "tier4":
-        return _pick_elite_opponent(fighter, candidates)
+    # ── Opponent-avoidance: hard cap + cooldown (repeat-matchup prevention) ──
+    # Excludes any candidate at the lifetime pairing cap or still inside their
+    # cooldown window -- see the AVOID_* constants above for the full design.
+    # A live title-rematch exception (title.py sets fighter.pending_rematch_
+    # opponent_name after a controversial title loss) bypasses the cooldown
+    # for that one named candidate, never the hard cap. The exception is
+    # consumed here -- once fighter reaches this point with a real (non-empty)
+    # avoidance-filtered pool, the exception is spent whether or not the named
+    # opponent ended up eligible/drawn this time (a one-attempt permission,
+    # not a guarantee). If avoidance would leave NO eligible opponent at all,
+    # skip this fighter's fight entirely this cycle rather than force a
+    # repeat -- return None (caller must handle this like the existing
+    # IndexError-on-exhausted-pool case).
+    current_day = get_sim_day()
+    exempt_name = fighter.pending_rematch_opponent_name
+    avoid_candidates = [
+        f for f in candidates if _avoidance_hard_ok(fighter, f, current_day, exempt_name)
+    ]
+    if not avoid_candidates:
+        return None
+    candidates = avoid_candidates
+    if exempt_name:
+        fighter.pending_rematch_opponent_name = ""
 
-    return random.choice(candidates)
+    def _select(pool: list[Fighter]) -> Fighter:
+        if fighter.tier == "tier4" and opp_tier == "tier4":
+            return _pick_elite_opponent(fighter, pool)
+        return random.choice(pool)
+
+    # ── Soft weighting (still-tapering recent opponents) via rejection
+    # sampling -- wraps whichever selection path ran above without touching
+    # either path's own internals (in particular, _pick_elite_opponent's
+    # tuned rank-proximity weighting stays untouched). The exempted rematch
+    # opponent (if drawn) is never rejected on this pass.
+    remaining = list(candidates)
+    pick = _select(remaining)
+    for _ in range(AVOID_MAX_REROLLS - 1):
+        if pick.name == exempt_name:
+            break
+        penalty = _repeat_penalty(fighter, pick, current_day)
+        if penalty >= 1.0 or random.random() < penalty:
+            break
+        remaining = [f for f in remaining if f is not pick]
+        if not remaining:
+            break
+        pick = _select(remaining)
+    return pick
 
 
 def _recent_tier_fights(fighter: Fighter, window: int) -> list:

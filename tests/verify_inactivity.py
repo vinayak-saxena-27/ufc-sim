@@ -55,6 +55,8 @@ for _ in range(N_FIGHTS):
         b = pick_opponent(a, pools)
     except IndexError:
         continue
+    if b is None:
+        continue
     current_day = get_sim_day()
     winner, loser = simulate_fight(a, b, org="league", sim_day=current_day)
     for f in (winner, loser):
