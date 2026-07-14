@@ -144,6 +144,16 @@ class Fighter:
     campaign_fights_remaining: int  = 0
     campaign_wins:              int  = 0
 
+    # Opponent-avoidance title-rematch exception (matchmaking.py) -- set once
+    # by title.py immediately after a controversial title-fight loss (close
+    # decision), naming the opponent this fighter is owed an immediate
+    # rematch shot against. Consumed (cleared) the next time matchmaking.py
+    # draws this fighter as fighter A, regardless of whether that specific
+    # opponent ends up drawn -- a one-attempt permission, not a guarantee.
+    # Still bounded by the hard lifetime pairing cap; only bypasses the
+    # cooldown/soft-weight penalty.
+    pending_rematch_opponent_name: str = ""
+
     fight_history: list[FightResult] = field(default_factory=list)
     labels: set[str] = field(default_factory=set)
 

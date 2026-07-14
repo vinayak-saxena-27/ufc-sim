@@ -58,7 +58,7 @@ from dataclasses import dataclass
 from career.fighter import Fighter
 from engine.fight import simulate_fight
 from career.labels import award_title, get_champion_id, maybe_update_labels
-from matchmaking import apply_tier_transitions
+from matchmaking import apply_tier_transitions, AVOID_REMATCH_SCORE_MARGIN
 from career.tiers import TIER_RULESET
 from career.cuts import maybe_evaluate_cut
 from career.retirement import maybe_evaluate_retirement
@@ -455,6 +455,16 @@ def maybe_run_title_fight(
     decision_mode = decision_mode_for_org(reg_org) if reg_org else "total_score"
     winner, loser = simulate_fight(fa, fb, org=org, is_title=True, sim_day=get_sim_day(),
                                     decision_mode=decision_mode)
+
+    # Opponent-avoidance title-rematch exception (matchmaking.py): a close
+    # ("controversial") title-fight decision earns the loser one exempted
+    # shot at an immediate rematch, bypassing the normal cooldown/soft-weight
+    # (never the lifetime hard cap). Checked on the just-completed fight's
+    # own FightResult (loser.fight_history[-1] -- always the real fight that
+    # just resolved, appended by engine/fight.py above).
+    _last = loser.fight_history[-1]
+    if _last.method == "decision" and abs(_last.score_margin) <= AVOID_REMATCH_SCORE_MARGIN:
+        loser.pending_rematch_opponent_name = winner.name
 
     # Base per-fight hype update (finish/decision/adversity/style) -- title
     # fights are still fights. Title-specific bonus below is additive on top.

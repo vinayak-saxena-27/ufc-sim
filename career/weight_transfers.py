@@ -518,6 +518,8 @@ if __name__ == "__main__":
             b = pick_opponent(a, pools)
         except IndexError:
             continue
+        if b is None:
+            continue
 
         fight_wc, fight_tier = a.weight_class, a.tier
         day = get_sim_day()

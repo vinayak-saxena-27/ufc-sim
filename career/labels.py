@@ -392,6 +392,8 @@ if __name__ == "__main__":
     for _ in range(1500):
         a = random.choice(all_fighters)
         b = pick_opponent(a, pools)
+        if b is None:
+            continue
         winner, loser = simulate_fight(a, b, org="league")
         for f in (winner, loser):
             apply_tier_transitions(f, pools)
