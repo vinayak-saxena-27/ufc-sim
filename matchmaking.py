@@ -74,6 +74,15 @@ Increase to flatten (more uniform); decrease to sharpen (tighter clustering). Fi
 # Stratified A-selection (option a density fix) was tested at rates 0.20 and 0.30
 # and rejected: boosting Elite fight frequency and depleting the pool are the same
 # multiplier -- no rate separates them. Option (b) scheduled fights are the active fix.
+#
+# 2026-07-13: the SAME rejection applies to any mechanism that raises a whole
+# tier's fight frequency by an uncapped, indefinite multiplier -- promotion/
+# demotion/cut/retirement checks are keyed on a fighter's OWN fight-count
+# windows, so more fights always means faster churn, no matter the rate. The
+# discovery mechanism below (ELITE_DISCOVERY_INTERVAL/pick_discovery_a) is
+# NOT that: it's bounded per-fighter (a hard fight-count ceiling, not a rate
+# applied forever), which is what makes it structurally safe where option (a)
+# wasn't. See pick_discovery_a's docstring for the full reasoning.
 
 ELITE_FIGHT_INTERVAL: int = 5
 """One scheduled Elite-vs-Elite fight is injected per this many main-loop fights.
@@ -85,6 +94,33 @@ At interval=5: 3000 main fights produce 600 injected Elite fights (20% extra).
 Each injected fight picks A via pick_scheduled_elite_a() and routes B through
 pick_opponent() / _pick_elite_opponent() so Layers 2+3 remain active.
 Lower values = denser schedule; set to 0 to disable."""
+
+ELITE_DISCOVERY_MAX_FIGHTS: int = 5
+"""Eligibility ceiling for pick_discovery_a's density injection: a tier4 fighter
+with FEWER than this many career tier4 fights is eligible to be pulled into an
+extra scheduled fight, on top of whatever they get from ordinary matchmaking.
+Once a fighter crosses this many tier4 fights they age out of this specific
+mechanism for good -- from then on they rely on ordinary matchmaking, or (if
+they won enough to rank) ELITE_FIGHT_INTERVAL's existing ranked-density
+injection instead. This hard per-fighter cap is what keeps this mechanism from
+repeating the rejected option (a) failure mode noted above."""
+
+ELITE_DISCOVERY_INTERVAL: int = 6
+"""One scheduled 'discovery' fight (see pick_discovery_a) injected per this many
+main-loop fights. Swept 10/6/5 (seed 42, 9000-13000 sim-day runs) against two
+metrics: the fraction of a tier4 org+weight-class pool with <=1 career tier4
+fights (the clique-diagnosis metric -- 59% before this feature existed), and
+the average calendar-day gap between a champion's title defenses (target
+~330 days, from TITLE_FIGHT_INTERVAL=9's own tuning).
+  10 (half ELITE_FIGHT_INTERVAL=5's frequency, the original first-pass guess):
+     53% at <=1 fights -- meaningful but modest improvement.
+  6: 44% at <=1 fights, ~403-day average title-defense gap -- best clique
+     improvement while keeping title cadence close to target.
+  5 (same frequency as ELITE_FIGHT_INTERVAL): 47% at <=1 fights (no better
+     than 6, within noise) but compressed the title-defense gap to ~244 days --
+     confirms running both mechanisms in lockstep over-compounds
+     TITLE_FIGHT_INTERVAL's counter, as flagged when this constant was designed.
+Settled on 6. Set to 0 to disable."""
 
 # Gate statistics — how often the Elite ranked-opponent gate fires per sim run.
 _gate_enforced: int = 0   # gate applied, candidates filtered to unranked only
@@ -304,6 +340,74 @@ def pick_scheduled_elite_a(
     wc, org = random.choice(fallback)
     same_org = [f for f in pools[wc]["tier4"] if f.org == org and not is_champion(f)]
     return random.choice(same_org)
+
+
+def pick_discovery_a(
+    pools: dict[str, dict[str, list[Fighter]]],
+) -> Fighter | None:
+    """Pick an UNDER-FOUGHT Elite fighter to be A in a scheduled 'discovery' fight
+    -- the sibling injection to pick_scheduled_elite_a (option b), targeting the
+    OPPOSITE end of the tier4 population: fighters with fewer than
+    ELITE_DISCOVERY_MAX_FIGHTS career tier4 fights, rather than fighters already
+    in the ranked top-15.
+
+    Without this, a tier4 fighter's ONLY path to ever being discovered or
+    evaluated at all is ordinary uniform matchmaking (sim.py's
+    random.choice(all_fighters)) -- diluted across the ENTIRE population
+    (every tier, every weight class) -- while pick_scheduled_elite_a's density
+    injection exclusively keeps boosting whoever is ALREADY ranked. Measured
+    directly: 59% of one org's tier4 pool had 0-1 tier4 fights ever after 25
+    simulated years, producing the same handful of "insiders" facing each
+    other repeatedly while everyone else never gets a look.
+
+    This is NOT a repeat of the rejected option (a) stratified-A-selection
+    experiment (see the comment above ELITE_FIGHT_INTERVAL) -- that applied an
+    uncapped rate to the whole Elite tier indefinitely, so already-active
+    insiders got proportionally MORE fights too, forever, accelerating the
+    whole tier's churn with no natural stop. This mechanism explicitly EXCLUDES
+    that population (an established fighter with >= ELITE_DISCOVERY_MAX_FIGHTS
+    is ineligible by construction) -- every individual fighter's boost is
+    hard-capped at a few extra fights before they age out of eligibility for
+    good, either by winning enough to rank (and getting picked up by the
+    existing ranked-density mechanism instead) or by accumulating enough of a
+    record to be evaluated normally like anyone else.
+
+    Same safety shape as pick_scheduled_elite_a: org-partitioned (The League
+    excluded -- its fighters fight exclusively via orgs/league_season.py),
+    requires >= 2 eligible fighters in a (weight_class, org) pair, excludes
+    reigning champions (who by construction already have a real tier4 track
+    record), self-limiting (silently returns None if no eligible pair exists).
+    No bootstrap-fallback branch needed -- unlike pick_scheduled_elite_a's
+    (which exists only because rankings start empty), every tier4 fighter
+    starts at 0 tier4 fights, so "eligible" is trivially true from fight #1.
+    """
+    from orgs.org_registry import ORG_NAMES, THE_LEAGUE_NAME
+    schedulable_orgs = [o for o in ORG_NAMES if o != THE_LEAGUE_NAME]
+
+    def _tier4_fight_count(f: Fighter) -> int:
+        return sum(1 for r in f.fight_history if r.tier == "tier4")
+
+    eligible: list[tuple[str, str]] = []
+    for wc, wc_pools in pools.items():
+        tier4 = wc_pools.get("tier4", [])
+        for org in schedulable_orgs:
+            n_underfought = sum(
+                1 for f in tier4
+                if f.org == org and not is_champion(f)
+                and _tier4_fight_count(f) < ELITE_DISCOVERY_MAX_FIGHTS
+            )
+            if n_underfought >= 2:
+                eligible.append((wc, org))
+
+    if not eligible:
+        return None
+    wc, org = random.choice(eligible)
+    underfought_in_org = [
+        f for f in pools[wc]["tier4"]
+        if f.org == org and not is_champion(f)
+        and _tier4_fight_count(f) < ELITE_DISCOVERY_MAX_FIGHTS
+    ]
+    return random.choice(underfought_in_org)
 
 
 def pick_opponent(

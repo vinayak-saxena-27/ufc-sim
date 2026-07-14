@@ -22,12 +22,13 @@ from rich.table import Table
 from rich.text import Text
 
 from engine.fight import simulate_fight, SCALE
+from career.fighter import Fighter
 from career.tiers import TIER_LEVELS, WEIGHT_CLASSES, generate_all_tiers
 from matchmaking import (
-    pick_opponent, pick_scheduled_elite_a, apply_tier_transitions,
+    pick_opponent, pick_scheduled_elite_a, pick_discovery_a, apply_tier_transitions,
     reset_gate_stats, get_gate_stats,
     reset_elite_pairings, get_elite_pairings, ElitePairingRecord,
-    ELITE_FIGHT_INTERVAL,
+    ELITE_FIGHT_INTERVAL, ELITE_DISCOVERY_INTERVAL,
 )
 from career.labels import maybe_update_labels, reset_title_registry, update_labels, get_champion_id, is_champion, CONTENDER
 from title import reset_title_scheduling, maybe_run_title_fight, get_title_history, TITLE_FIGHT_INTERVAL
@@ -183,6 +184,60 @@ def init_sim(scale: float, seed: int, debug: bool = False) -> None:
     _sim_state.initialized = True
 
 
+def _run_additive_elite_fight(
+    fighter_a: Fighter, pools: dict, all_fighters: list, fight_num: int,
+) -> None:
+    """
+    Resolve one additively-injected tier4 fight (fighter_a already selected)
+    and run the same post-fight bookkeeping every other fight source in this
+    sim runs -- dev boost, phase feedback, hype, tier transitions, labels,
+    retirement/cut, title-fight-counter increment, then the annual-cadence
+    advances (clock/age/development/academy reputation/hype decay).
+
+    Shared by both additive density mechanisms (ELITE_FIGHT_INTERVAL's
+    ranked-density injection and ELITE_DISCOVERY_INTERVAL's under-fought-
+    fighter injection) -- they differ only in how fighter_a was selected;
+    everything downstream of that is identical, so it lives here once.
+
+    These are fully normal fights -- no special org tag, no exclusion from
+    any downstream system (wins, losses, promotion, demotion, labels,
+    rankings, hype, development all treat them like any other fight).
+    """
+    try:
+        _be = pick_opponent(fighter_a, pools)
+    except IndexError:
+        return
+    _ewc, _etier, _eday = fighter_a.weight_class, fighter_a.tier, get_sim_day()
+    _eorg = fighter_a.org if _etier == "tier4" else ""
+    _edecision_mode = decision_mode_for_org(_eorg) if _eorg else "total_score"
+    _ew, _el = simulate_fight(fighter_a, _be, org="league", sim_day=_eday,
+                               decision_mode=_edecision_mode)
+    apply_win_development_boost(_ew)
+    apply_phase_development_feedback(_ew)
+    apply_phase_development_feedback(_el)
+    update_hype_after_fight(_ew, _el)
+    update_hype_after_fight(_el, _ew)
+    _erm: list = []
+    for _ef in (_ew, _el):
+        apply_tier_transitions(_ef, pools)
+        maybe_update_labels(_ef)
+        _er = maybe_evaluate_retirement(_ef, pools, fight_num=fight_num)
+        if not _er:
+            _er = maybe_evaluate_cut(_ef, pools, fight_num=fight_num)
+        if _er:
+            _erm.append(_ef)
+    for _erf in _erm:
+        all_fighters[:] = [f for f in all_fighters if f is not _erf]
+    maybe_run_title_fight(_ewc, _etier, pools, org="league",
+                         fight_num=fight_num, all_fighters=all_fighters,
+                         top_tier_org=_eorg)
+    advance_sim_clock()
+    advance_all_ages(all_fighters)
+    advance_all_development(all_fighters)
+    update_academy_reputations(all_fighters, get_sim_day())
+    advance_all_hype_decay(all_fighters)
+
+
 def _run_one_bout(
     pools: dict, all_fighters: list, i: int, n_fights: int, debug: bool, verbose: bool,
 ) -> bool:
@@ -331,40 +386,19 @@ def _run_one_bout(
     if ELITE_FIGHT_INTERVAL > 0 and (i + 1) % ELITE_FIGHT_INTERVAL == 0:
         _ae = pick_scheduled_elite_a(pools)
         if _ae is not None:
-            try:
-                _be = pick_opponent(_ae, pools)
-            except IndexError:
-                pass
-            else:
-                _ewc, _etier, _eday = _ae.weight_class, _ae.tier, get_sim_day()
-                _eorg = _ae.org if _etier == "tier4" else ""
-                _edecision_mode = decision_mode_for_org(_eorg) if _eorg else "total_score"
-                _ew, _el = simulate_fight(_ae, _be, org="league", sim_day=_eday,
-                                           decision_mode=_edecision_mode)
-                apply_win_development_boost(_ew)
-                apply_phase_development_feedback(_ew)
-                apply_phase_development_feedback(_el)
-                update_hype_after_fight(_ew, _el)
-                update_hype_after_fight(_el, _ew)
-                _erm: list = []
-                for _ef in (_ew, _el):
-                    apply_tier_transitions(_ef, pools)
-                    maybe_update_labels(_ef)
-                    _er = maybe_evaluate_retirement(_ef, pools, fight_num=i + 1)
-                    if not _er:
-                        _er = maybe_evaluate_cut(_ef, pools, fight_num=i + 1)
-                    if _er:
-                        _erm.append(_ef)
-                for _erf in _erm:
-                    all_fighters[:] = [f for f in all_fighters if f is not _erf]
-                maybe_run_title_fight(_ewc, _etier, pools, org="league",
-                                     fight_num=i + 1, all_fighters=all_fighters,
-                                     top_tier_org=_eorg)
-                advance_sim_clock()
-                advance_all_ages(all_fighters)
-                advance_all_development(all_fighters)
-                update_academy_reputations(all_fighters, get_sim_day())
-                advance_all_hype_decay(all_fighters)
+            _run_additive_elite_fight(_ae, pools, all_fighters, i + 1)
+
+    # ── Discovery fight (under-fought tier4 fighters) ────────────────────
+    # Sibling of the block above, additively injected on its own (deliberately
+    # less frequent) cadence -- see matchmaking.ELITE_DISCOVERY_INTERVAL/
+    # pick_discovery_a for the full rationale. Gives fighters who rarely get
+    # drawn by ordinary matchmaking a bounded, self-limiting shot at building
+    # a real tier4 record, without repeating the rejected option (a) failure
+    # mode (uncapped whole-tier rate = uncapped whole-tier churn).
+    if ELITE_DISCOVERY_INTERVAL > 0 and (i + 1) % ELITE_DISCOVERY_INTERVAL == 0:
+        _da = pick_discovery_a(pools)
+        if _da is not None:
+            _run_additive_elite_fight(_da, pools, all_fighters, i + 1)
 
     if debug:
         if verbose:
