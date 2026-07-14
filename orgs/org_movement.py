@@ -36,7 +36,7 @@ import random
 from dataclasses import dataclass
 
 from career.fighter import Fighter
-from career.labels import LABEL_UPDATE_INTERVAL, get_champion_id
+from career.labels import LABEL_UPDATE_INTERVAL, get_champion_id, vacate_title
 from career.age import _PRIME_END
 from career.org_rankings import get_org_rankings, is_ranked_in_org
 from orgs.org_registry import APEX_FC_NAME, THE_LEAGUE_NAME, EASTERN_GP_NAME
@@ -45,6 +45,24 @@ from career.age import SIM_DAYS_PER_YEAR
 from title import fights_until_next_title_fight
 
 _NON_APEX_ORGS: list[str] = [THE_LEAGUE_NAME, EASTERN_GP_NAME]
+
+
+def _vacate_if_champion_at(fighter: Fighter, old_org: str) -> None:
+    """Explicit belt resolution when a reigning champion changes ORG
+    (matchmaking-audit session) -- same orphaned-belt class as tier
+    transitions (matchmaking.apply_tier_transitions) and weight moves
+    (weight_transfers._execute_move): all three org-move executors below
+    reassign fighter.org, after which the old org's belt registry entry
+    points at a fighter is_champion() can no longer see, silently
+    discovered cycles later as 'champ gone -> vacant' (observed on a
+    74-sim-year seed-7 verification run as an unpinnable League champion).
+    A champion signing with a rival vacates on the way out -- call BEFORE
+    reassigning fighter.org."""
+    wc = fighter.weight_class
+    if get_champion_id(wc, "tier4", old_org) == fighter.fighter_id:
+        vacate_title(wc, "tier4", old_org)
+        print(f"[TITLE] {fighter.name} vacates the {wc} tier4 ({old_org}) "
+              f"belt (left the organization)")
 
 # ── Part 6.1: Apex FC poaching (inbound) ─────────────────────────────────────
 
@@ -215,6 +233,7 @@ def _maybe_poach_to_apex(
 
     was_ranked_at_old_org = is_ranked_in_org(fighter)
     old_org = org
+    _vacate_if_champion_at(fighter, old_org)
     fighter.org = APEX_FC_NAME
     fighter.org_start_day = get_sim_day()
     if was_ranked_at_old_org:
@@ -300,6 +319,7 @@ def _maybe_leave_apex(fighter: Fighter, fight_num: int) -> None:
 def _execute_departure(fighter: Fighter, fight_num: int, *, reason: str) -> None:
     dest_org = random.choice(_NON_APEX_ORGS)
     old_org = fighter.org
+    _vacate_if_champion_at(fighter, old_org)
     fighter.org = dest_org
     fighter.org_start_day = get_sim_day()
     fighter.org_arrived_pre_ranked = False   # leaves unranked -- no gate boost
@@ -344,6 +364,7 @@ def _maybe_move_within_tier(fighter: Fighter, fight_num: int) -> None:
     if random.random() >= WITHIN_TIER_MOVE_BASE_PROB:
         return
 
+    _vacate_if_champion_at(fighter, org)
     fighter.org = other_org
     fighter.org_start_day = get_sim_day()
     fighter.org_arrived_pre_ranked = False   # enters unranked, per spec

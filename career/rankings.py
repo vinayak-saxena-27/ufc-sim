@@ -245,6 +245,18 @@ def compute_division_rankings(
     for score, wr_c, q_c, h_c, n, rw, wins, f in scored:
         if n == 0 or wins < RANKINGS_MIN_WINS:
             continue
+        # No losing career records in a ranked list (matchmaking-audit
+        # session). Decided from data, not assumption: across a 50-sim-year
+        # baseline run, every losing-record ranked entry (3, all in thin
+        # per-org mid-major lists -- e.g. a 7-10 fighter at #1) owed its
+        # losses overwhelmingly to DEPARTED opponents (cut/retired), not to
+        # ranked/winning opposition: 0-1 quality losses out of 6-10. That's
+        # thin-pool padding, not defensible recent form, so exclusion beats
+        # loss-quality weighting. Reigning champions are unaffected -- the
+        # champion pin (org_rankings/nonelite_rankings) synthesizes their
+        # entry from the belt registry, not from this score path.
+        if f.wins < f.losses:
+            continue
         if len(ranked) >= RANKINGS_SIZE:
             break
         ranked.append(RankingEntry(

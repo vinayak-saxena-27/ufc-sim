@@ -321,7 +321,12 @@ def _advance_one_campaign(
 
     campaign_wc   = fighter.campaign_weight_class
     campaign_pool = pools.get(campaign_wc, {}).get(tier, [])
-    opponents     = [f for f in campaign_pool if f is not fighter]
+    # Exclude reigning champions from the opponent draw (matchmaking-audit
+    # session) -- every other fight path excludes champions from ordinary
+    # (non-title) bookings; this was the one draw that could still hand a
+    # champion an ordinary loss.
+    from career.labels import is_champion as _is_champ
+    opponents     = [f for f in campaign_pool if f is not fighter and not _is_champ(f)]
 
     if not opponents:
         fighter.campaign_fights_remaining -= 1

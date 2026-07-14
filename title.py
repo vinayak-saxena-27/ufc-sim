@@ -75,8 +75,17 @@ from sim_calendar import get_sim_day, inactivity_percentile
 
 # ── Tuning ────────────────────────────────────────────────────────────────────
 
-TITLE_FIGHT_INTERVAL: int = 9
+TITLE_FIGHT_INTERVAL: int = 18
 """
+Doubled from 9 (matchmaking-audit session): SIM_DAYS_PER_FIGHT halved 2->1
+in the same change, which doubles every pool's fights-per-year -- at
+interval 9 that would have halved the calendar gap between title fights
+(tier4 champion defense gap was averaging ~310 days; it would have
+compressed to ~155). 18 holds the tuned day-cadence at the new throughput
+(measured after the pair of changes: ~330-day tier4 defense gap).
+
+Earlier tuning note (still the reasoning behind the ~330-day target):
+
 Regular fights per (weight_class, tier_key[, org]) before a title fight is
 scheduled. Lowered from 15 (2026-07-13, same session as the tier3/tier4
 population rescale and the champion-excluded-from-ordinary-matchmaking fix):
@@ -93,6 +102,23 @@ title defenses, with gaps up to 882 days. At 9, the average gap is ~330 days
 Flag as a first-pass estimate.  If champion turnover feels too fast or slow,
 adjust here; no other file needs to change.
 """
+
+TITLE_FIGHT_INTERVAL_BY_TIER: dict[str, int] = {
+    "tier1": 6,
+    "tier2": 6,
+    "tier3": TITLE_FIGHT_INTERVAL,
+    "tier4": TITLE_FIGHT_INTERVAL,
+}
+"""Per-tier override of TITLE_FIGHT_INTERVAL (matchmaking-audit session).
+The counter for an org-bearing tier increments only on fights whose fighter A
+belongs to that specific (weight_class, org) pool -- and a regional/mid-major
+org's slice of one weight class is only ~4-8 fighters, so at the flat
+interval a small org accumulated 18 pool-fights every FEW YEARS. Measured on
+a 75-sim-year run: non-tier4 champion defense gaps averaged 1253 days, and
+since a reigning champion can't take ordinary fights, tier1/tier2 champions
+sat frozen for decades (worst observed: 53 years without a defense). tier3
+(whole-tier pool, no org split) and tier4 (large org pools) keep the flat
+value; the small-pool tiers run a 3x faster counter."""
 
 _MIN_POOL_SIZE: int = 2   # need at least 2 fighters to hold a title fight
 
@@ -139,6 +165,8 @@ class TitleFightRecord:
     was_vacant:       bool   # True → both fighters competed for a vacant belt
     override:         str | None = None   # None / "inactivity" / "hype" / "fallback"
     challenger_rank:  int | None = None   # current rank of the challenger (slot-A if vacant)
+    sim_day:          int = -1            # global sim day the title fight ran (diagnostics)
+    org:              str = ""            # reg_org the belt belongs to ("" for tier3)
 
 
 _fight_counters: dict[tuple[str, str], int]  = {}
@@ -170,7 +198,8 @@ def fights_until_next_title_fight(weight_class: str, tier_key: str, org: str = "
     schedule anywhere in this codebase, just this pool-level countdown, so
     that's what "imminent title defense" means here."""
     key = (weight_class, tier_key, org if tier_key in ("tier1", "tier2", "tier4") else "")
-    return TITLE_FIGHT_INTERVAL - _fight_counters.get(key, 0)
+    interval = TITLE_FIGHT_INTERVAL_BY_TIER.get(tier_key, TITLE_FIGHT_INTERVAL)
+    return interval - _fight_counters.get(key, 0)
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
@@ -224,18 +253,19 @@ def _walk_inactivity(
     return first, False  # all inactive: keep default
 
 
-def _prefer_non_losing(fighters: list[Fighter]) -> list[Fighter]:
-    """Filters to fighters with a non-losing career record (wins >= losses),
-    if any qualify. Used by the overall-based fallback paths below so a
-    below-.500 fighter never becomes a title challenger or vacant-fight
-    combatant purely by raw skill stat when a non-losing alternative exists
-    -- the prior behavior (pure max-overall) could hand a title to a fighter
-    with a losing record whenever the ranked pool was too thin to use the
-    normal rankings-driven path. Returns the original list unfiltered if
-    nobody qualifies (a losing-record fighter getting the shot beats no
-    fight happening at all)."""
-    non_losing = [f for f in fighters if f.wins >= f.losses]
-    return non_losing if non_losing else fighters
+def _non_losing_only(fighters: list[Fighter]) -> list[Fighter]:
+    """Hard filter to fighters with a non-losing career record (wins >=
+    losses). This REPLACED the old soft preference (_prefer_non_losing,
+    which fell back to the unfiltered list when nobody qualified, on the
+    theory that "a losing-record fighter getting the shot beats no fight
+    happening at all"): measured on a 67-sim-year audit run, that fallback
+    was the direct source of sub-.500 CHAMPIONS (a 14-19 and a 1-2
+    mid-major titleholder, both crowned via thin-pool vacant fallbacks).
+    A title fight that can't field two non-losing participants is now
+    skipped -- the belt stays vacant until the pool recovers (the per-pool
+    counter has already reset, so it retries after TITLE_FIGHT_INTERVAL
+    more pool fights)."""
+    return [f for f in fighters if f.wins >= f.losses]
 
 
 def _consume_title_exemption(fa: Fighter, fb: Fighter) -> None:
@@ -279,17 +309,12 @@ def _pick_challenger(
     rankings = _rankings_for(weight_class, org)
     ranked_eligible = [e for e in rankings if e.fighter.fighter_id in eligible_ids]
 
-    # Prefer non-losing-record challengers even on the NORMAL rankings-driven
-    # path, not just the thin-pool fallback below -- the ranking formula
-    # (career/rankings.py) rewards recency-weighted form and opponent quality
-    # with no floor on cumulative win/loss record, so a losing-record fighter
-    # can legitimately reach the top of the ranked list. Without this, that
-    # fighter would still become the #1 challenger (and could win the title)
-    # via this path, since the fallback-only guard below is rarely reached
-    # once rankings are populated (which is most of the time now).
-    non_losing_ranked = [e for e in ranked_eligible if e.fighter.wins >= e.fighter.losses]
-    if non_losing_ranked:
-        ranked_eligible = non_losing_ranked
+    # Non-losing records only, even on the NORMAL rankings-driven path -- the
+    # ranking score path now excludes losing records outright (rankings.py,
+    # this session), but the champion PIN can still inject one, and this
+    # hard filter (no fallback to the unfiltered list -- see _non_losing_only)
+    # is what guarantees a sub-.500 fighter can never reach a title fight.
+    ranked_eligible = [e for e in ranked_eligible if e.fighter.wins >= e.fighter.losses]
 
     # Opponent-avoidance (hard cap + cooldown, see matchmaking.title_pairing_
     # allowed) -- title.py never calls matchmaking.pick_opponent, so this is
@@ -314,7 +339,9 @@ def _pick_challenger(
             ranked_eligible = avoid_ranked
 
     if not ranked_eligible:
-        fallback_candidates = _prefer_non_losing(eligible)
+        fallback_candidates = _non_losing_only(eligible)
+        if not fallback_candidates:
+            return None, None   # nobody non-losing -- skip this defense entirely
         if champion is not None:
             avoid_fallback = [
                 f for f in fallback_candidates
@@ -369,19 +396,16 @@ def _pick_vacant_pair(
     rankings = _rankings_for(weight_class, org)
     ranked_eligible = [e for e in rankings if e.fighter.fighter_id in eligible_ids]
 
-    # Same non-losing preference as _pick_challenger's normal path (see its
-    # comment) -- a vacant-belt fight shouldn't crown a losing-record fighter
-    # just because they out-scored everyone on recency/quality/hype.
-    non_losing_ranked = [e for e in ranked_eligible if e.fighter.wins >= e.fighter.losses]
-    if non_losing_ranked:
-        ranked_eligible = non_losing_ranked
+    # Same hard non-losing rule as _pick_challenger (see its comment) -- a
+    # vacant-belt fight must never crown a losing-record fighter, full stop.
+    ranked_eligible = [e for e in ranked_eligible if e.fighter.wins >= e.fighter.losses]
 
     current_day = get_sim_day()
 
     if len(ranked_eligible) < 2:
-        candidates = _prefer_non_losing(pool)
+        candidates = _non_losing_only(pool)
         if len(candidates) < 2:
-            candidates = pool
+            return None   # can't field two non-losing fighters -- belt stays vacant
         sorted_candidates = sorted(candidates, key=lambda f: f.overall, reverse=True)
         fa = sorted_candidates[0]
         rest = sorted_candidates[1:]
@@ -421,7 +445,7 @@ def _pick_vacant_pair(
         if avoid_others:
             others_pool = avoid_others
         others = sorted(
-            _prefer_non_losing(others_pool),
+            _non_losing_only(others_pool),
             key=lambda f: f.overall,
             reverse=True,
         )
@@ -483,7 +507,7 @@ def maybe_run_title_fight(
     reg_org = top_tier_org if tier_key in ("tier1", "tier2", "tier4") else ""
     key = (weight_class, tier_key, reg_org)
     _fight_counters[key] = _fight_counters.get(key, 0) + 1
-    if _fight_counters[key] < TITLE_FIGHT_INTERVAL:
+    if _fight_counters[key] < TITLE_FIGHT_INTERVAL_BY_TIER.get(tier_key, TITLE_FIGHT_INTERVAL):
         return False
 
     # Title fight is due.
@@ -601,5 +625,7 @@ def maybe_run_title_fight(
         was_vacant       = was_vacant,
         override         = override,
         challenger_rank  = challenger_rank,
+        sim_day          = get_sim_day(),
+        org              = reg_org,
     ))
     return True

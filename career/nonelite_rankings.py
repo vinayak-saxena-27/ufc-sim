@@ -218,6 +218,12 @@ def compute_tier_rankings(
     for score, wr_c, q_c, h_c, n, rw, wins, f in scored:
         if n == 0 or wins < RANKINGS_MIN_WINS:
             continue
+        # No losing career records in a ranked list -- same data-driven rule
+        # as rankings.compute_division_rankings (see the comment there; the
+        # measured thin-pool-padding cases were in THESE per-org mid-major
+        # lists specifically).
+        if f.wins < f.losses:
+            continue
         if len(ranked) >= list_size:
             break
         ranked.append(RankingEntry(
@@ -231,6 +237,38 @@ def compute_tier_rankings(
             n_ranked_wins      = rw,
         ))
     return ranked
+
+
+def _pin_champion_tier(
+    weight_class: str, tier_key: str, org: str,
+    pool_fighters: list[Fighter], entries: list[RankingEntry], list_size: int,
+) -> list[RankingEntry]:
+    """Tier-generic sibling of career/org_rankings._pin_champion (which is
+    tier4-hardcoded): the reigning champion of (weight_class, tier_key, org)
+    is #1 by definition in that slot's ranked list. Extends the pin below the
+    top tier (matchmaking-audit session) -- at baseline, 6 of 51 champions
+    (all mid-major/top-org) sat unpinned below #1 or off their list entirely.
+    tier1 (Regional) has no ranked list at all (champion-only, see module
+    docstring), so there is nothing to pin there. Same synthesized-placeholder
+    behavior as the tier4 pin for a champion with no qualifying score."""
+    champ_id = get_champion_id(weight_class, tier_key, org)
+    if champ_id is None:
+        return entries
+    champ_fighter = next((f for f in pool_fighters if f.fighter_id == champ_id), None)
+    if champ_fighter is None:
+        return entries   # champion not in this pool (stale registry) -- leave as-is
+    champ_entry = next((e for e in entries if e.fighter.fighter_id == champ_id), None)
+    if champ_entry is None:
+        champ_entry = RankingEntry(
+            rank=1, fighter=champ_fighter, score=0.0,
+            win_rate_component=0.0, quality_component=0.0, hype_component=0.0,
+            n_elite_fights=0, n_ranked_wins=0,
+        )
+    remaining = [e for e in entries if e.fighter.fighter_id != champ_id]
+    pinned = [champ_entry] + remaining[: list_size - 1]
+    for i, e in enumerate(pinned):
+        e.rank = i + 1
+    return pinned
 
 
 def update_nonelite_rankings(pools: dict[str, dict[str, list[Fighter]]]) -> None:
@@ -262,13 +300,18 @@ def update_nonelite_rankings(pools: dict[str, dict[str, list[Fighter]]]) -> None
                 org_fighters, "tier2", _midmajor_org_ranked_ids[org],
                 MIDMAJOR_LIST_SIZE, MIDMAJOR_QUALITY_NORM,
             )
+            org_entries = _pin_champion_tier(wc, "tier2", org, org_fighters,
+                                             org_entries, MIDMAJOR_LIST_SIZE)
             _midmajor_org_rankings_by_wc_org[(wc, org)] = org_entries
             new_mm_org_ids[org].update(e.fighter.fighter_id for e in org_entries)
 
+        tier3_pool = tier_pools.get("tier3", [])
         to_entries = compute_tier_rankings(
-            tier_pools.get("tier3", []), "tier3", _toporg_ranked_ids,
+            tier3_pool, "tier3", _toporg_ranked_ids,
             TOPORG_LIST_SIZE, TOPORG_QUALITY_NORM,
         )
+        to_entries = _pin_champion_tier(wc, "tier3", "", tier3_pool,
+                                        to_entries, TOPORG_LIST_SIZE)
         _toporg_rankings_by_wc[wc] = to_entries
         new_to_ids.update(e.fighter.fighter_id for e in to_entries)
 
@@ -280,10 +323,14 @@ def update_nonelite_rankings(pools: dict[str, dict[str, list[Fighter]]]) -> None
 
 # ── Part 2: Scout-notice promotion ──────────────────────────────────────────
 
-BASE_SCOUT_PROB: float = 0.03
+BASE_SCOUT_PROB: float = 0.015
 """Base per-evaluation-cycle probability, before modifiers. Deliberately low
 -- most fighters should still earn promotion through the deterministic
-threshold path; scout-notice is meant to be a notable event, not routine."""
+threshold path; scout-notice is meant to be a notable event, not routine.
+Halved from 0.03 (matchmaking-audit session): SIM_DAYS_PER_FIGHT went 2->1,
+so the RANKINGS_UPDATE_INTERVAL cycle this is evaluated on now fires twice
+as often per sim-year -- halving the per-cycle probability holds the
+scout-promotions-per-year rate the 0.03 value was tuned for."""
 
 RANK_MOD_MAX: float = 2.0   # rank #1 (or Regional's sole champion slot)
 RANK_MOD_MIN: float = 0.5   # last position in the list (rank #5 or #15)
@@ -420,6 +467,21 @@ def _execute_scout_promotion(
     idx = TIER_LEVELS.index(from_tier)
     to_tier = TIER_LEVELS[idx + 1]
     wc = fighter.weight_class
+
+    # Explicit belt resolution, mirroring matchmaking.apply_tier_transitions
+    # (matchmaking-audit session): a scout-noticed champion moving up a tier
+    # vacates rather than leaving the belt registry orphaned at the old tier
+    # key to be silently discovered by a later defense check. Regional/mid-
+    # major champions are exactly the fighters this fast-track targets (the
+    # champion signal BOOSTS scout probability at tier1), so this path hits
+    # reigning champions far more often than the deterministic one.
+    from career.labels import vacate_title, is_champion as _is_champ
+    if _is_champ(fighter):
+        _org = fighter.org if from_tier in ("tier1", "tier2", "tier4") else ""
+        vacate_title(wc, from_tier, _org)
+        tag = f" ({_org})" if _org else ""
+        print(f"[TITLE] {fighter.name} vacates the {wc} {from_tier}{tag} "
+              f"belt (scout-notice promotion)")
 
     pools[wc][from_tier].remove(fighter)
     fighter.tier = to_tier
