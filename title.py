@@ -75,13 +75,20 @@ from sim_calendar import get_sim_day, inactivity_percentile
 
 # ── Tuning ────────────────────────────────────────────────────────────────────
 
-TITLE_FIGHT_INTERVAL: int = 15
+TITLE_FIGHT_INTERVAL: int = 9
 """
-Regular fights per (weight_class, tier_key) before a title fight is scheduled.
-Rationale: with ~2 000 total regular fights across 15 pools (3 WC × 5 tiers),
-each pool averages ~133 fights → ~8–9 title bouts per pool per full sim run.
-That leaves room for meaningful champion tenures and occasional belt changes
-without title fights overwhelming the calendar.
+Regular fights per (weight_class, tier_key[, org]) before a title fight is
+scheduled. Lowered from 15 (2026-07-13, same session as the tier3/tier4
+population rescale and the champion-excluded-from-ordinary-matchmaking fix):
+those two changes compounded to make title defenses far too infrequent --
+a bigger Elite pool means each (weight_class, org) pool's share of the main
+loop's random fighter-A draws shrinks, so accumulating 15 pool-fights took
+much longer in calendar time than when this was tuned against the old,
+5x-smaller population; on top of that, champions no longer get "extra"
+ordinary fights between defenses. Measured directly (seed 42, ~9000-day run):
+old value of 15 produced an average 501-day (~1.4yr) gap between a champion's
+title defenses, with gaps up to 882 days. At 9, the average gap is ~330 days
+(~0.9yr), closer to real-world championship cadence.
 
 Flag as a first-pass estimate.  If champion turnover feels too fast or slow,
 adjust here; no other file needs to change.
@@ -206,6 +213,20 @@ def _walk_inactivity(
     return first, False  # all inactive: keep default
 
 
+def _prefer_non_losing(fighters: list[Fighter]) -> list[Fighter]:
+    """Filters to fighters with a non-losing career record (wins >= losses),
+    if any qualify. Used by the overall-based fallback paths below so a
+    below-.500 fighter never becomes a title challenger or vacant-fight
+    combatant purely by raw skill stat when a non-losing alternative exists
+    -- the prior behavior (pure max-overall) could hand a title to a fighter
+    with a losing record whenever the ranked pool was too thin to use the
+    normal rankings-driven path. Returns the original list unfiltered if
+    nobody qualifies (a losing-record fighter getting the shot beats no
+    fight happening at all)."""
+    non_losing = [f for f in fighters if f.wins >= f.losses]
+    return non_losing if non_losing else fighters
+
+
 def _pick_challenger(
     pool: list[Fighter],
     champion_id: str,
@@ -235,7 +256,7 @@ def _pick_challenger(
     ranked_eligible = [e for e in rankings if e.fighter.fighter_id in eligible_ids]
 
     if not ranked_eligible:
-        return max(eligible, key=lambda f: f.overall), "fallback"
+        return max(_prefer_non_losing(eligible), key=lambda f: f.overall), "fallback"
 
     # 1. Inactivity override: walk from #1 down the ranked list
     pick_entry, inactivity_fired = _walk_inactivity(ranked_eligible, pool)
@@ -277,7 +298,10 @@ def _pick_vacant_pair(
     ranked_eligible = [e for e in rankings if e.fighter.fighter_id in eligible_ids]
 
     if len(ranked_eligible) < 2:
-        top2 = sorted(pool, key=lambda f: f.overall, reverse=True)[:2]
+        candidates = _prefer_non_losing(pool)
+        if len(candidates) < 2:
+            candidates = pool
+        top2 = sorted(candidates, key=lambda f: f.overall, reverse=True)[:2]
         return (top2[0], top2[1]), "fallback"
 
     # Slot A (#1): walk for inactivity
@@ -286,8 +310,9 @@ def _pick_vacant_pair(
     # Slot B (#2, excluding slot A): walk for inactivity
     remaining = [e for e in ranked_eligible if e.fighter is not slot_a_entry.fighter]
     if not remaining:
+        others_pool = [f for f in pool if f is not slot_a_entry.fighter]
         others = sorted(
-            [f for f in pool if f is not slot_a_entry.fighter],
+            _prefer_non_losing(others_pool),
             key=lambda f: f.overall,
             reverse=True,
         )

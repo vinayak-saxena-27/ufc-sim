@@ -66,7 +66,7 @@ from career.hype import (
     title_win_bonus, title_loss_penalty,
 )
 from career.retirement import maybe_evaluate_retirement
-from career.cuts import maybe_evaluate_cut
+from career.cuts import maybe_evaluate_cut, is_removed
 from orgs.org_registry import THE_LEAGUE_NAME
 
 # ── Tuning constants (first-pass, documented) ────────────────────────────────
@@ -219,11 +219,24 @@ def _run_playoffs(
         w2, l2 = _run_one_fight(seeds[1], seeds[2], pools, fight_num, sim_day, all_fighters,
                                  is_final=False, playoff_stage=True)
         semifinal_results.append((w2.name, l2.name, w2.fight_history[-1].method))
-        champ, runner_up = _run_one_fight(w1, w2, pools, fight_num, sim_day, all_fighters,
-                                           is_final=True, playoff_stage=True)
-        final_result = (champ.name, runner_up.name, champ.fight_history[-1].method)
-        champion_name = champ.name
-        print(f"[LEAGUE] {wc} Season {season_num} CHAMPION -- {champ.name}!")
+        # A semifinal winner can retire/get cut in _run_one_fight's own post-fight
+        # bookkeeping (apply_tier_transitions/maybe_evaluate_retirement/
+        # maybe_evaluate_cut) before the final runs -- execute_removal() has
+        # already pulled them out of pools[wc][their_tier] at that point, so
+        # re-running apply_tier_transitions on them in the final would crash
+        # with "list.remove(x): x not in list". Check first and skip the final
+        # gracefully instead (no champion crowned this season) if either
+        # finalist is gone.
+        if is_removed(w1.fighter_id) or is_removed(w2.fighter_id):
+            print(f"[LEAGUE] {wc} Season {season_num} -- a semifinal winner "
+                  f"retired/was cut before the final could run; season ends "
+                  f"without a crowned champion.")
+        else:
+            champ, runner_up = _run_one_fight(w1, w2, pools, fight_num, sim_day, all_fighters,
+                                               is_final=True, playoff_stage=True)
+            final_result = (champ.name, runner_up.name, champ.fight_history[-1].method)
+            champion_name = champ.name
+            print(f"[LEAGUE] {wc} Season {season_num} CHAMPION -- {champ.name}!")
     elif len(seeds) >= 2:
         # Thin pool: skip straight to a final between the top two scorers.
         champ, runner_up = _run_one_fight(seeds[0], seeds[1], pools, fight_num, sim_day, all_fighters,

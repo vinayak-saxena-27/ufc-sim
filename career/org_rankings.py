@@ -27,6 +27,7 @@ from __future__ import annotations
 
 from career.fighter import Fighter
 from career.rankings import RankingEntry, compute_division_rankings, RANKINGS_SIZE
+from career.labels import get_champion_id
 from orgs.org_registry import ORG_NAMES
 
 # ── Module-level per-(weight_class, org) ranking cache ──────────────────────
@@ -40,6 +41,48 @@ def reset_org_rankings() -> None:
     _org_rankings_by_wc_org.clear()
     for org in ORG_NAMES:
         _org_ranked_ids[org] = set()
+
+
+def _pin_champion(
+    weight_class: str, org: str, org_fighters: list[Fighter], entries: list[RankingEntry],
+) -> list[RankingEntry]:
+    """
+    The reigning champion is #1 by definition, regardless of where the score
+    formula would otherwise place them -- a title holder is never "unranked"
+    or ranked below a contender. Without this, a champion who e.g. just won
+    a vacant belt, or moved weight class, or is on a rare cold stretch could
+    show up ranked #2+ or missing from the list entirely, which reads as a
+    modeling bug even though the underlying score math is working as designed
+    (it was never told the champion is special).
+
+    Moves the champion's existing entry to rank 1 if they're already present;
+    synthesizes a zero-valued placeholder entry if they have no qualifying
+    score (e.g. no wins yet in their CURRENT weight class -- compute_division_
+    rankings only counts current-division tier4 fights, so a fresh weight-
+    class mover's belt can outrun their scored history). Everyone else shifts
+    down a slot; the list is re-truncated to RANKINGS_SIZE.
+    """
+    champ_id = get_champion_id(weight_class, "tier4", org)
+    if champ_id is None:
+        return entries
+
+    champ_fighter = next((f for f in org_fighters if f.fighter_id == champ_id), None)
+    if champ_fighter is None:
+        return entries   # champion no longer in this org's pool (stale registry) -- leave as-is
+
+    champ_entry = next((e for e in entries if e.fighter.fighter_id == champ_id), None)
+    if champ_entry is None:
+        champ_entry = RankingEntry(
+            rank=1, fighter=champ_fighter, score=0.0,
+            win_rate_component=0.0, quality_component=0.0, hype_component=0.0,
+            n_elite_fights=0, n_ranked_wins=0,
+        )
+
+    remaining = [e for e in entries if e.fighter.fighter_id != champ_id]
+    pinned = [champ_entry] + remaining[: RANKINGS_SIZE - 1]
+    for i, e in enumerate(pinned):
+        e.rank = i + 1
+    return pinned
 
 
 def update_org_rankings(pools: dict[str, dict[str, list[Fighter]]]) -> None:
@@ -58,6 +101,7 @@ def update_org_rankings(pools: dict[str, dict[str, list[Fighter]]]) -> None:
         for org in ORG_NAMES:
             org_fighters = [f for f in elite if f.org == org]
             entries = compute_division_rankings(org_fighters, _org_ranked_ids[org])
+            entries = _pin_champion(wc, org, org_fighters, entries)
             _org_rankings_by_wc_org[(wc, org)] = entries
             for e in entries:
                 new_ranked_ids[org].add(e.fighter.fighter_id)
