@@ -58,7 +58,7 @@ from dataclasses import dataclass
 from career.fighter import Fighter
 from engine.fight import simulate_fight
 from career.labels import award_title, get_champion_id, maybe_update_labels
-from matchmaking import apply_tier_transitions, AVOID_REMATCH_SCORE_MARGIN
+from matchmaking import apply_tier_transitions, AVOID_REMATCH_SCORE_MARGIN, title_pairing_allowed
 from career.tiers import TIER_RULESET
 from career.cuts import maybe_evaluate_cut
 from career.retirement import maybe_evaluate_retirement
@@ -227,6 +227,16 @@ def _prefer_non_losing(fighters: list[Fighter]) -> list[Fighter]:
     return non_losing if non_losing else fighters
 
 
+def _consume_title_exemption(fa: Fighter, fb: Fighter) -> None:
+    """Clears whichever side's pending_rematch_opponent_name was just used to
+    seat this pairing (see title_pairing_allowed). A no-op if neither side
+    held a live exemption naming the other."""
+    if fa.pending_rematch_opponent_name == fb.name:
+        fa.pending_rematch_opponent_name = ""
+    if fb.pending_rematch_opponent_name == fa.name:
+        fb.pending_rematch_opponent_name = ""
+
+
 def _pick_challenger(
     pool: list[Fighter],
     champion_id: str,
@@ -245,6 +255,9 @@ def _pick_challenger(
     eligible = [f for f in pool if f.fighter_id != champion_id]
     if not eligible:
         return None, None
+
+    champion = next((f for f in pool if f.fighter_id == champion_id), None)
+    current_day = get_sim_day()
 
     if tier_key == "tier4":
         gate_eligible = [f for f in eligible if is_eligible_vs_ranked(f)]
@@ -267,8 +280,33 @@ def _pick_challenger(
     if non_losing_ranked:
         ranked_eligible = non_losing_ranked
 
+    # Opponent-avoidance (hard cap + cooldown, see matchmaking.title_pairing_
+    # allowed) -- title.py never calls matchmaking.pick_opponent, so this is
+    # the only place a title defense's challenger gets checked against the
+    # same-pairing history the rest of the sim already enforces. Prefer the
+    # avoidance-filtered list; fall through to the unfiltered one if it would
+    # leave nothing ranked at all -- title fights are rare/high-stakes enough
+    # that an occasional repeat beats silently skipping the defense (unlike
+    # ordinary matchmaking's hard skip-the-cycle fallback in pick_opponent).
+    if champion is not None:
+        avoid_ranked = [
+            e for e in ranked_eligible if title_pairing_allowed(champion, e.fighter, current_day)
+        ]
+        if avoid_ranked:
+            ranked_eligible = avoid_ranked
+
     if not ranked_eligible:
-        return max(_prefer_non_losing(eligible), key=lambda f: f.overall), "fallback"
+        fallback_candidates = _prefer_non_losing(eligible)
+        if champion is not None:
+            avoid_fallback = [
+                f for f in fallback_candidates if title_pairing_allowed(champion, f, current_day)
+            ]
+            if avoid_fallback:
+                fallback_candidates = avoid_fallback
+        challenger = max(fallback_candidates, key=lambda f: f.overall)
+        if champion is not None:
+            _consume_title_exemption(champion, challenger)
+        return challenger, "fallback"
 
     # 1. Inactivity override: walk from #1 down the ranked list
     pick_entry, inactivity_fired = _walk_inactivity(ranked_eligible, pool)
@@ -285,6 +323,9 @@ def _pick_challenger(
         if hype_candidates:
             challenger = max(hype_candidates, key=lambda f: f.hype)
             override = "hype"
+
+    if champion is not None:
+        _consume_title_exemption(champion, challenger)
 
     return challenger, override
 
@@ -316,20 +357,50 @@ def _pick_vacant_pair(
     if non_losing_ranked:
         ranked_eligible = non_losing_ranked
 
+    current_day = get_sim_day()
+
     if len(ranked_eligible) < 2:
         candidates = _prefer_non_losing(pool)
         if len(candidates) < 2:
             candidates = pool
-        top2 = sorted(candidates, key=lambda f: f.overall, reverse=True)[:2]
-        return (top2[0], top2[1]), "fallback"
+        sorted_candidates = sorted(candidates, key=lambda f: f.overall, reverse=True)
+        fa = sorted_candidates[0]
+        rest = sorted_candidates[1:]
+        # Same avoidance preference as the ranked path below -- see its
+        # comment. Only changes the pick when the top-2-by-overall happen to
+        # be a repeat-capped/cooling-down pair; otherwise identical to before.
+        avoid_rest = [f for f in rest if title_pairing_allowed(fa, f, current_day)]
+        fb = avoid_rest[0] if avoid_rest else (rest[0] if rest else None)
+        if fb is None:
+            return None
+        _consume_title_exemption(fa, fb)
+        return (fa, fb), "fallback"
 
     # Slot A (#1): walk for inactivity
     slot_a_entry, override_a = _walk_inactivity(ranked_eligible, pool)
 
     # Slot B (#2, excluding slot A): walk for inactivity
     remaining = [e for e in ranked_eligible if e.fighter is not slot_a_entry.fighter]
+
+    # Opponent-avoidance (hard cap + cooldown) -- same rationale as
+    # _pick_challenger: title.py never calls matchmaking.pick_opponent, so a
+    # vacant-belt pairing needs its own check against title_pairing_allowed.
+    # Prefer the avoidance-filtered set; fall through to the unfiltered one
+    # if it would leave nothing, rather than skip the fight over a thin pool.
+    avoid_remaining = [
+        e for e in remaining if title_pairing_allowed(slot_a_entry.fighter, e.fighter, current_day)
+    ]
+    if avoid_remaining:
+        remaining = avoid_remaining
+
     if not remaining:
         others_pool = [f for f in pool if f is not slot_a_entry.fighter]
+        avoid_others = [
+            f for f in others_pool
+            if title_pairing_allowed(slot_a_entry.fighter, f, current_day)
+        ]
+        if avoid_others:
+            others_pool = avoid_others
         others = sorted(
             _prefer_non_losing(others_pool),
             key=lambda f: f.overall,
@@ -338,10 +409,12 @@ def _pick_vacant_pair(
         if not others:
             return None
         override = "inactivity" if override_a else None
+        _consume_title_exemption(slot_a_entry.fighter, others[0])
         return (slot_a_entry.fighter, others[0]), override
 
     slot_b_entry, override_b = _walk_inactivity(remaining, pool)
     override = "inactivity" if (override_a or override_b) else None
+    _consume_title_exemption(slot_a_entry.fighter, slot_b_entry.fighter)
     return (slot_a_entry.fighter, slot_b_entry.fighter), override
 
 
