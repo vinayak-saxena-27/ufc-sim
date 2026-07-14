@@ -113,6 +113,17 @@ ranging ~15-60, a 12-point gap is meaningful without being extreme."""
 _HYPE_CANDIDATE_RANKS: int = 5
 """Search ranked positions #2 through this (inclusive) for hype-override candidates."""
 
+REMATCH_MIN_DEFENSES: int = 2
+"""A live title-rematch exception (see AVOID_REMATCH_SCORE_MARGIN /
+pending_rematch_opponent_name) only bypasses cooldown for a title DEFENSE
+once the reigning champion has notched at least this many successful
+defenses THIS reign (per _defense_counts). An immediate or soon rematch for
+the belt only really happens for a champion who has proven themselves
+against others first -- a brand-new titleholder doesn't get an instant
+do-over. Checked fresh against whoever currently holds the belt each time,
+so it composes correctly through title changes (a dethroned ex-champion who
+later becomes a new exemption-holder starts this count over at 0 too)."""
+
 
 # ── State ─────────────────────────────────────────────────────────────────────
 
@@ -288,9 +299,16 @@ def _pick_challenger(
     # leave nothing ranked at all -- title fights are rare/high-stakes enough
     # that an occasional repeat beats silently skipping the defense (unlike
     # ordinary matchmaking's hard skip-the-cycle fallback in pick_opponent).
+    #
+    # The rematch exception only bypasses cooldown once the champion has
+    # REMATCH_MIN_DEFENSES defenses this reign -- an immediate/soon rematch
+    # only really happens for an established champion (see REMATCH_MIN_
+    # DEFENSES), not one who just won the belt.
     if champion is not None:
+        exemption_ready = _defense_counts.get(champion.fighter_id, 0) >= REMATCH_MIN_DEFENSES
         avoid_ranked = [
-            e for e in ranked_eligible if title_pairing_allowed(champion, e.fighter, current_day)
+            e for e in ranked_eligible
+            if title_pairing_allowed(champion, e.fighter, current_day, exemption_ready)
         ]
         if avoid_ranked:
             ranked_eligible = avoid_ranked
@@ -299,7 +317,8 @@ def _pick_challenger(
         fallback_candidates = _prefer_non_losing(eligible)
         if champion is not None:
             avoid_fallback = [
-                f for f in fallback_candidates if title_pairing_allowed(champion, f, current_day)
+                f for f in fallback_candidates
+                if title_pairing_allowed(champion, f, current_day, exemption_ready)
             ]
             if avoid_fallback:
                 fallback_candidates = avoid_fallback
