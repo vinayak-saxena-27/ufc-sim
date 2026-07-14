@@ -111,6 +111,35 @@ _sim_state = SimpleNamespace(
 def get_sim_state() -> SimpleNamespace:
     return _sim_state
 
+
+# ── Stage-1 selection diagnostics ─────────────────────────────────────────────
+# Counts, per fighter_id, of what happened each time the main loop drew them
+# as fighter A. Pure counting (no RNG use, no behavior change) -- lets a
+# post-run audit classify long-idle fighters by failure stage:
+#   drawn_a          -- times drawn by random.choice(all_fighters)
+#   skip_league      -- drawn but skipped (League tier4: dedicated scheduler)
+#   skip_champion    -- drawn but skipped (reigning champion: defenses only)
+#   skip_pool        -- drawn but pick_opponent raised (division exhausted)
+#   skip_avoidance   -- drawn but opponent-avoidance left no candidate
+_mm_diag: dict[str, dict[str, int]] = {}
+
+
+def _diag_bump(fighter_id: str, key: str) -> None:
+    d = _mm_diag.setdefault(fighter_id, {})
+    d[key] = d.get(key, 0) + 1
+
+
+def get_mm_diag() -> dict[str, dict[str, int]]:
+    return _mm_diag
+
+IDLE_WEIGHT_SAT_YEARS: float = 4.0
+"""Idle-weighted fighter-A selection saturation (see _run_one_bout). A
+fighter's draw weight grows linearly with years since their last real fight
+(anchored at creation day if they've never fought), capping at
+1 + IDLE_WEIGHT_SAT_YEARS (= 5x a just-fought fighter's weight). Linear-with-
+cap keeps the mechanism gentle: it compresses the no-fight tail without
+turning the schedule into a strict idle-first queue."""
+
 _TIER_SHORT: dict[str, str] = {
     "tier0": "Amateur",
     "tier1": "Regional",
@@ -148,6 +177,7 @@ def init_sim(scale: float, seed: int, debug: bool = False) -> None:
     starting a fresh run().
     """
     random.seed(seed)
+    reset_sim_clock()   # before generation -- Fighter.created_day reads the clock
     pools = generate_all_tiers(scale=scale)
     reset_title_registry()
     reset_title_scheduling()
@@ -157,7 +187,6 @@ def init_sim(scale: float, seed: int, debug: bool = False) -> None:
     reset_org_rankings()
     reset_scout_notice_log()
     reset_gate_stats()
-    reset_sim_clock()
     reset_age_advancement()
     reset_development_advancement()
     reset_academy_reputation()
@@ -169,6 +198,7 @@ def init_sim(scale: float, seed: int, debug: bool = False) -> None:
     reset_league_season()
     reset_league_history()
     reset_org_movement_log()
+    _mm_diag.clear()
     all_fighters = [
         f
         for wc_pools in pools.values()
@@ -209,8 +239,11 @@ def _run_additive_elite_fight(
         return
     if _be is None:
         # Opponent-avoidance left no eligible non-repeat candidate -- skip
-        # this additively-injected fight rather than force a repeat.
+        # this additively-injected fight rather than force a repeat. Same
+        # skip-streak escalation bookkeeping as the main loop's skip path.
+        fighter_a.avoid_skip_streak += 1
         return
+    fighter_a.avoid_skip_streak = 0
     _ewc, _etier, _eday = fighter_a.weight_class, fighter_a.tier, get_sim_day()
     _eorg = fighter_a.org if _etier == "tier4" else ""
     _edecision_mode = decision_mode_for_org(_eorg) if _eorg else "total_score"
@@ -258,26 +291,50 @@ def _run_one_bout(
     """
     if not all_fighters:
         return True
-    a = random.choice(all_fighters)
-    if a.tier == "tier4" and a.org == THE_LEAGUE_NAME:
-        # The League's fighters get their fights exclusively through
-        # orgs/league_season.py's dedicated scheduler (called below,
-        # once per iteration) -- never through normal random matchmaking.
+    # ── Idle-weighted fighter-A draw (matchmaking-audit session) ─────────────
+    # Was a uniform random.choice(all_fighters). Measured over a 7000-attempt
+    # 50-sim-year baseline run (seed 42): uniform selection left 149 active
+    # fighters with a 10+ YEAR gap since their last real fight (100 of them
+    # never matched at all), purely from the Poisson tail of uniform sampling
+    # over a ~1600-fighter population -- nothing ever prioritized a long-idle
+    # fighter back into the schedule. Weighting the draw by time-since-last-
+    # real-fight keeps total fight throughput identical while compressing that
+    # idle tail: a fighter idle for IDLE_WEIGHT_SAT_YEARS+ is drawn
+    # (1 + IDLE_WEIGHT_SAT_YEARS)x as often as one who just fought.
+    #
+    # League tier4 fighters and reigning champions get weight 0 instead of a
+    # post-draw skip -- they can never fight through this path (dedicated
+    # season scheduler / scheduled title defenses only), so drawing them was
+    # a pure wasted attempt (~4% of all draws at baseline).
+    current_day_w = get_sim_day()
+    weights: list[float] = []
+    for f in all_fighters:
+        if (f.tier == "tier4" and f.org == THE_LEAGUE_NAME) or is_champion(f):
+            weights.append(0.0)
+            continue
+        anchor = f.last_real_fight_day if f.last_real_fight_day >= 0 else f.created_day
+        idle_years = (current_day_w - anchor) / 365.25
+        weights.append(1.0 + min(idle_years, IDLE_WEIGHT_SAT_YEARS))
+    if not any(w > 0.0 for w in weights):
         return False
-    if is_champion(a):
-        # A reigning champion's only fights are scheduled title defenses
-        # (title.maybe_run_title_fight) -- an ordinary matchmaking fight
-        # wouldn't count as a defense and shouldn't be able to happen at all.
-        return False
+    a = random.choices(all_fighters, weights=weights, k=1)[0]
+    _diag_bump(a.fighter_id, "drawn_a")
     try:
         b = pick_opponent(a, pools)
     except IndexError:
         # Division pool exhausted — skip this iteration rather than crash.
+        _diag_bump(a.fighter_id, "skip_pool")
         return False
     if b is None:
         # Opponent-avoidance left no eligible non-repeat candidate this cycle
         # (matchmaking.AVOID_* constants) -- skip rather than force a repeat.
+        # Skip-compounding guard: remember the streak so pick_opponent can
+        # progressively relax the cooldown next time (see Fighter.
+        # avoid_skip_streak / matchmaking._cooldown_cleared).
+        a.avoid_skip_streak += 1
+        _diag_bump(a.fighter_id, "skip_avoidance")
         return False
+    a.avoid_skip_streak = 0
 
     # Capture tier+wc(+org) before transitions — title scheduling uses the
     # pool where the fight took place, not where A ends up afterward.

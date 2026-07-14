@@ -149,4 +149,11 @@ def simulate_fight(
         time_ground      = time_ground,
         weight_class     = loser.weight_class,
     ))
+    # Cached "last real fight" anchor for idle-weighted matchmaking selection
+    # (sim.py) -- avoids an O(history) scan per fighter per draw. sim_day=-1
+    # (unstamped/test fights) is deliberately not cached: it isn't a real
+    # calendar activity signal (see FightResult.sim_day).
+    if sim_day >= 0:
+        winner.last_real_fight_day = sim_day
+        loser.last_real_fight_day  = sim_day
     return winner, loser
