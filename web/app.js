@@ -225,52 +225,12 @@ function render() {
   document.getElementById("day-display").textContent =
     `${formatSimDay(SNAPSHOT.current_day)} · ${SNAPSHOT.fighters.length} fighters`;
   const parts = [
-    renderTitlesSection(),
     renderOrganizationsSection(),
     renderAcademiesSection(),
     renderFightersSection(),
   ];
   document.getElementById("content").innerHTML = parts.join("\n");
   renderFightersTable();
-}
-
-function renderTitlesSection() {
-  // Top-tier (tier4) belts only -- Apex FC / The League / Eastern Grand Prix.
-  // The backend registry also tracks regional/mid-major/"Top-org btm-15"
-  // belts for internal mechanics (scout-notice signals, retention logic),
-  // but those aren't a recognizable championship concept worth surfacing --
-  // the old version listed all ~24 slots per division, including a
-  // "Top-org btm-15" belt tier that isn't a real distinction.
-  const byWc = new Map();
-  for (const key of Object.keys(SNAPSHOT.titles)) {
-    const t = SNAPSHOT.titles[key];
-    if (t.tier !== "tier4") continue;
-    if (!byWc.has(t.weight_class)) byWc.set(t.weight_class, []);
-    byWc.get(t.weight_class).push(t);
-  }
-
-  const sections = weightClasses().map(wc => {
-    const list = (byWc.get(wc) || []).filter(t => t.champion_id);
-    if (!list.length) {
-      return `<h3>${humanize(wc)}</h3><p class="empty-note">No top-tier titles awarded yet in this division.</p>`;
-    }
-    list.sort((a, b) => (a.org || "").localeCompare(b.org || ""));
-    const rows = list.map(t => `<tr>
-        <td>${t.org ? orgLink(t.org) : "—"}</td>
-        <td>${fighterLink(t.champion_id, t.champion_name)}</td>
-      </tr>`).join("\n");
-    return `<h3>${humanize(wc)}</h3>
-      <table class="wikitable">
-        <thead><tr><th>Organization</th><th>Champion</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>`;
-  }).join("\n");
-
-  return `<section id="titles" class="section-block">
-    <h2>Titles</h2>
-    <p>Current world champions of the three top-tier organizations.</p>
-    ${sections}
-  </section>`;
 }
 
 function renderOrganizationsSection() {
@@ -289,7 +249,11 @@ function renderOrganizationsSection() {
       const champLine = t && t.champion_id
         ? `<p><strong>Champion:</strong> ${fighterLink(t.champion_id, t.champion_name)}</p>`
         : `<p class="empty-note">Title vacant</p>`;
-      return `<h4>${humanize(wc)}</h4>${champLine}${orgRosterTableHtml(org.name, wc)}`;
+      return `<h4>${humanize(wc)}</h4>${champLine}
+        <details class="roster-dropdown">
+          <summary>Top 15 ranked</summary>
+          ${orgRosterTableHtml(org.name, wc)}
+        </details>`;
     }).join("\n");
     return `<div class="org-card org-card--top">
       <div class="org-card-head">

@@ -12,22 +12,22 @@
 
   <header id="masthead">
     <h1>UFC Career Sim</h1>
-    <div id="controls-bar">
-      <span id="controls-links">
-        <a href="#" id="btn-init">Initialize simulation</a>
-        <span class="sep">·</span>
-        <a href="#" id="btn-week">Advance 1 week</a>
-        <span class="sep">·</span>
-        <a href="#" id="btn-month">Advance 1 month</a>
-      </span>
-      <span class="controls-inputs">
-        (scale <input type="number" id="in-scale" value="1.0" step="0.1" min="0.1">,
-        seed <input type="number" id="in-seed" value="42" step="1">)
-      </span>
-      <span id="day-display"></span>
+  </header>
+
+  <aside id="sim-sidebar">
+    <div id="sim-sidebar-title">Sim Controls</div>
+    <div id="day-display"></div>
+    <nav id="controls-links">
+      <a href="#" id="btn-init">Initialize simulation</a>
+      <a href="#" id="btn-week">Advance 1 week</a>
+      <a href="#" id="btn-month">Advance 1 month</a>
+    </nav>
+    <div class="controls-inputs">
+      <label>Scale <input type="number" id="in-scale" value="1.0" step="0.1" min="0.1"></label>
+      <label>Seed <input type="number" id="in-seed" value="42" step="1"></label>
     </div>
     <div id="status-line"></div>
-  </header>
+  </aside>
 
   <p class="lead">
     An encyclopedic snapshot of a simulated mixed martial arts career ecosystem —
@@ -40,7 +40,6 @@
   <nav id="toc">
     <div id="toc-title">Contents</div>
     <ol>
-      <li><a href="#titles">Titles</a></li>
       <li><a href="#organizations">Organizations</a></li>
       <li><a href="#academies">Academies</a></li>
       <li><a href="#fighters">All Fighters</a></li>

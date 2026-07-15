@@ -78,30 +78,74 @@ a:visited { color: var(--link-visited); }
 
 #masthead { margin-bottom: 0.6em; }
 
-#controls-bar {
-  font-size: 0.92em;
-  color: var(--muted);
-  padding: 0.3em 0;
-  border-bottom: 1px solid #eaecf0;
-  margin-bottom: 0.4em;
+/* Sim controls: a sticky sidebar so Initialize/Advance stay reachable
+   without scrolling back to the top of a long page. Pinned to the
+   viewport (not the document) via position:fixed -- reverts to a normal
+   in-flow block above the lead paragraph on viewports too narrow to fit
+   it beside the 980px-wide article column without overlapping. */
+#sim-sidebar {
+  position: fixed;
+  top: 1.2em;
+  right: 1.4em;
+  width: 190px;
+  background: var(--box-bg);
+  border: 1px solid var(--border);
+  padding: 0.7em 0.9em;
+  font-size: 0.88em;
+  z-index: 40;
 }
 
-#controls-bar .sep { margin: 0 0.5em; color: var(--border); }
+#sim-sidebar-title {
+  font-family: var(--serif);
+  font-weight: bold;
+  font-size: 1.05em;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.3em;
+  margin-bottom: 0.5em;
+}
 
-#controls-inputs, .controls-inputs { margin-left: 0.8em; }
+#sim-sidebar #day-display {
+  font-weight: bold;
+  color: var(--text);
+  margin-bottom: 0.5em;
+}
 
-.controls-inputs input[type="number"] {
+#sim-sidebar #controls-links {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35em;
+  margin-bottom: 0.6em;
+}
+
+#sim-sidebar .controls-inputs {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3em;
+  color: var(--muted);
+  margin-bottom: 0.5em;
+}
+
+#sim-sidebar .controls-inputs input[type="number"] {
   width: 4.5em;
   font-family: var(--sans);
   font-size: 1em;
   border: 1px solid var(--border);
   padding: 0.05em 0.2em;
+  margin-left: 0.3em;
 }
-
-#day-display { float: right; font-weight: bold; color: var(--text); }
 
 #status-line { font-size: 0.9em; color: #b32424; min-height: 1.2em; }
 #status-line.ok { color: #14866d; }
+
+@media (max-width: 1500px) {
+  #sim-sidebar {
+    position: static;
+    width: auto;
+    margin: 0 0 1.2em;
+  }
+  #sim-sidebar #controls-links { flex-direction: row; flex-wrap: wrap; gap: 0.3em 1em; }
+  #sim-sidebar .controls-inputs { flex-direction: row; gap: 1em; }
+}
 
 /* ── Table of contents box ───────────────────────────────────────────── */
 
@@ -380,6 +424,20 @@ table.wikitable th.sortable-col:hover { background: #dde3e8; }
 
 .regional-directory { opacity: 0.96; }
 .regional-directory table.wikitable { font-size: 0.88em; }
+
+.roster-dropdown { margin: 0.3em 0 1em; }
+.roster-dropdown summary {
+  cursor: pointer;
+  color: var(--link);
+  font-size: 0.92em;
+  padding: 0.15em 0;
+  list-style: none;
+}
+.roster-dropdown summary::-webkit-details-marker { display: none; }
+.roster-dropdown summary::before { content: "▶ "; font-size: 0.75em; color: var(--muted); }
+.roster-dropdown[open] summary::before { content: "▼ "; }
+.roster-dropdown summary:hover { text-decoration: underline; }
+.roster-dropdown table.wikitable { margin-top: 0.5em; }
 
 
 /* ═══════════════════════════════════════════════════════════════════
