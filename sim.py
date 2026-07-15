@@ -25,10 +25,9 @@ from engine.fight import simulate_fight, SCALE
 from career.fighter import Fighter
 from career.tiers import TIER_LEVELS, WEIGHT_CLASSES, generate_all_tiers
 from matchmaking import (
-    pick_opponent, pick_scheduled_elite_a, pick_discovery_a, apply_tier_transitions,
+    pick_opponent, apply_tier_transitions,
     reset_gate_stats, get_gate_stats,
     reset_elite_pairings, get_elite_pairings, ElitePairingRecord,
-    ELITE_FIGHT_INTERVAL, ELITE_DISCOVERY_INTERVAL,
 )
 from career.labels import maybe_update_labels, reset_title_registry, update_labels, get_champion_id, is_champion, CONTENDER
 from title import reset_title_scheduling, maybe_run_title_fight, get_title_history, TITLE_FIGHT_INTERVAL
@@ -75,6 +74,9 @@ from orgs.league_season import (
 from orgs.org_movement import (
     run_org_movement_sweep, reset_org_movement_log, get_org_movement_log,
     MAX_APEX_ROSTER,
+)
+from orgs.events import (
+    get_next_due_bout_slot, league_event_due, reset_events, get_event_history,
 )
 from sim_calendar import reset_sim_clock, advance_sim_clock, get_sim_day, SIM_DAYS_PER_FIGHT
 from career.replenishment import (
@@ -131,14 +133,6 @@ def _diag_bump(fighter_id: str, key: str) -> None:
 
 def get_mm_diag() -> dict[str, dict[str, int]]:
     return _mm_diag
-
-IDLE_WEIGHT_SAT_YEARS: float = 4.0
-"""Idle-weighted fighter-A selection saturation (see _run_one_bout). A
-fighter's draw weight grows linearly with years since their last real fight
-(anchored at creation day if they've never fought), capping at
-1 + IDLE_WEIGHT_SAT_YEARS (= 5x a just-fought fighter's weight). Linear-with-
-cap keeps the mechanism gentle: it compresses the no-fight tail without
-turning the schedule into a strict idle-first queue."""
 
 _TIER_SHORT: dict[str, str] = {
     "tier0": "Amateur",
@@ -198,6 +192,7 @@ def init_sim(scale: float, seed: int, debug: bool = False) -> None:
     reset_league_season()
     reset_league_history()
     reset_org_movement_log()
+    reset_events()
     _mm_diag.clear()
     all_fighters = [
         f
@@ -214,67 +209,6 @@ def init_sim(scale: float, seed: int, debug: bool = False) -> None:
     _sim_state.initialized = True
 
 
-def _run_additive_elite_fight(
-    fighter_a: Fighter, pools: dict, all_fighters: list, fight_num: int,
-) -> None:
-    """
-    Resolve one additively-injected tier4 fight (fighter_a already selected)
-    and run the same post-fight bookkeeping every other fight source in this
-    sim runs -- dev boost, phase feedback, hype, tier transitions, labels,
-    retirement/cut, title-fight-counter increment, then the annual-cadence
-    advances (clock/age/development/academy reputation/hype decay).
-
-    Shared by both additive density mechanisms (ELITE_FIGHT_INTERVAL's
-    ranked-density injection and ELITE_DISCOVERY_INTERVAL's under-fought-
-    fighter injection) -- they differ only in how fighter_a was selected;
-    everything downstream of that is identical, so it lives here once.
-
-    These are fully normal fights -- no special org tag, no exclusion from
-    any downstream system (wins, losses, promotion, demotion, labels,
-    rankings, hype, development all treat them like any other fight).
-    """
-    try:
-        _be = pick_opponent(fighter_a, pools)
-    except IndexError:
-        return
-    if _be is None:
-        # Opponent-avoidance left no eligible non-repeat candidate -- skip
-        # this additively-injected fight rather than force a repeat. Same
-        # skip-streak escalation bookkeeping as the main loop's skip path.
-        fighter_a.avoid_skip_streak += 1
-        return
-    fighter_a.avoid_skip_streak = 0
-    _ewc, _etier, _eday = fighter_a.weight_class, fighter_a.tier, get_sim_day()
-    _eorg = fighter_a.org if _etier == "tier4" else ""
-    _edecision_mode = decision_mode_for_org(_eorg) if _eorg else "total_score"
-    _ew, _el = simulate_fight(fighter_a, _be, org="league", sim_day=_eday,
-                               decision_mode=_edecision_mode)
-    apply_win_development_boost(_ew)
-    apply_phase_development_feedback(_ew)
-    apply_phase_development_feedback(_el)
-    update_hype_after_fight(_ew, _el)
-    update_hype_after_fight(_el, _ew)
-    _erm: list = []
-    for _ef in (_ew, _el):
-        apply_tier_transitions(_ef, pools)
-        maybe_update_labels(_ef)
-        _er = maybe_evaluate_retirement(_ef, pools, fight_num=fight_num)
-        if not _er:
-            _er = maybe_evaluate_cut(_ef, pools, fight_num=fight_num)
-        if _er:
-            _erm.append(_ef)
-    for _erf in _erm:
-        all_fighters[:] = [f for f in all_fighters if f is not _erf]
-    maybe_run_title_fight(_ewc, _etier, pools, org="league",
-                         fight_num=fight_num, all_fighters=all_fighters,
-                         top_tier_org=_eorg)
-    advance_sim_clock()
-    advance_all_ages(all_fighters)
-    advance_all_development(all_fighters)
-    update_academy_reputations(all_fighters, get_sim_day())
-    advance_all_hype_decay(all_fighters)
-
-
 def _run_one_bout(
     pools: dict, all_fighters: list, i: int, n_fights: int, debug: bool, verbose: bool,
 ) -> bool:
@@ -288,117 +222,147 @@ def _run_one_bout(
     verbose gates ALL console output (the debug one-liner and the Panel) so this
     same function serves both run()'s rich CLI output (verbose=True) and
     step_sim()'s headless API-driven steps (verbose=False).
+
+    ── Fighter-A source (Phase 2: event scheduling; 2nd pass: tier0/tier3
+    get their own dedicated pseudo-entity cadence) ──────────────────────────
+    Every tier now fights exclusively through orgs/events.py's dated event
+    cards -- get_next_due_bout_slot returns the next slot off whichever
+    schedulable entity (a real tier1/tier2/tier4 org, or the tier0/tier3
+    pseudo-entities) is most overdue, pre-selecting fighter A (or, for a
+    title slot, resolving the whole bout itself via title.maybe_run_title_
+    fight and skipping the regular-bout body below entirely). There is no
+    separate "fallback" draw anymore -- an earlier version had tier0/tier3
+    share a single probabilistic draw gated by a FALLBACK_RESERVE_RATE
+    reserved-attempt-share hack (added after org events were found to crowd
+    tier0 out entirely); giving tier0/tier3 their own dedicated cadence,
+    competing on the same footing as every real org, made that unnecessary.
+    Per-bout resolution/bookkeeping itself (simulate_fight, dev, hype, tier
+    transitions, labels, retirement/cut) is UNCHANGED from before Phase 2 --
+    only what selects fighter A, and when a title fight fires, changed.
     """
     if not all_fighters:
         return True
-    # ── Idle-weighted fighter-A draw (matchmaking-audit session) ─────────────
-    # Was a uniform random.choice(all_fighters). Measured over a 7000-attempt
-    # 50-sim-year baseline run (seed 42): uniform selection left 149 active
-    # fighters with a 10+ YEAR gap since their last real fight (100 of them
-    # never matched at all), purely from the Poisson tail of uniform sampling
-    # over a ~1600-fighter population -- nothing ever prioritized a long-idle
-    # fighter back into the schedule. Weighting the draw by time-since-last-
-    # real-fight keeps total fight throughput identical while compressing that
-    # idle tail: a fighter idle for IDLE_WEIGHT_SAT_YEARS+ is drawn
-    # (1 + IDLE_WEIGHT_SAT_YEARS)x as often as one who just fought.
-    #
-    # League tier4 fighters and reigning champions get weight 0 instead of a
-    # post-draw skip -- they can never fight through this path (dedicated
-    # season scheduler / scheduled title defenses only), so drawing them was
-    # a pure wasted attempt (~4% of all draws at baseline).
-    current_day_w = get_sim_day()
-    weights: list[float] = []
-    for f in all_fighters:
-        if (f.tier == "tier4" and f.org == THE_LEAGUE_NAME) or is_champion(f):
-            weights.append(0.0)
-            continue
-        anchor = f.last_real_fight_day if f.last_real_fight_day >= 0 else f.created_day
-        idle_years = (current_day_w - anchor) / 365.25
-        weights.append(1.0 + min(idle_years, IDLE_WEIGHT_SAT_YEARS))
-    if not any(w > 0.0 for w in weights):
-        return False
-    a = random.choices(all_fighters, weights=weights, k=1)[0]
-    _diag_bump(a.fighter_id, "drawn_a")
-    try:
-        b = pick_opponent(a, pools)
-    except IndexError:
-        # Division pool exhausted — skip this iteration rather than crash.
-        _diag_bump(a.fighter_id, "skip_pool")
-        return False
-    if b is None:
-        # Opponent-avoidance left no eligible non-repeat candidate this cycle
-        # (matchmaking.AVOID_* constants) -- skip rather than force a repeat.
-        # Skip-compounding guard: remember the streak so pick_opponent can
-        # progressively relax the cooldown next time (see Fighter.
-        # avoid_skip_streak / matchmaking._cooldown_cleared).
-        a.avoid_skip_streak += 1
-        _diag_bump(a.fighter_id, "skip_avoidance")
-        return False
-    a.avoid_skip_streak = 0
 
-    # Capture tier+wc(+org) before transitions — title scheduling uses the
-    # pool where the fight took place, not where A ends up afterward.
-    fight_wc   = a.weight_class
-    fight_tier = a.tier
-    # tier1 (regional), tier2 (mid-major), and tier4 (top-tier) all carry
-    # a real org; other tiers have no org concept. Regular tier1/tier2
-    # matchmaking is NOT org-partitioned (only title fights are, per
-    # Session B1 Part 5 / B2 Part 4) -- so the title-fight activity
-    # counter below tracks fighter A's org regardless of which org B
-    # happens to be from, same as tier4's pre-hard-partition convention.
-    fight_org  = a.org if fight_tier in ("tier1", "tier2", "tier4") else ""
     current_day = get_sim_day()
+    due = get_next_due_bout_slot(pools, current_day)
 
-    p_a_wins = _true_prob(a.overall, b.overall)
-    decision_mode = decision_mode_for_org(fight_org) if fight_org else "total_score"
-    winner, loser = simulate_fight(a, b, org="league", sim_day=current_day,
-                                    decision_mode=decision_mode)
-    result = winner.fight_history[-1]
-
-    # Win-triggered development boost — fires on the BASE fighter object (not the
-    # effective copy used inside fight resolution), so the gain is durable.
-    apply_win_development_boost(winner)
-    # Style-mixing feedback: fires for both winner and loser, gated on
-    # non-primary-phase time exposure for this fight (see development.py).
-    apply_phase_development_feedback(winner)
-    apply_phase_development_feedback(loser)
-    # Dynamic hype: base win/loss + style modifiers for both participants.
-    update_hype_after_fight(winner, loser)
-    update_hype_after_fight(loser, winner)
-
-    # Apply tier transitions, label updates,
-    # retirement (checked first), then cut (skips already-retired fighters).
-    # Age advancement is now global (advance_all_ages below) -- not per-fight.
+    a = b = winner = loser = None
+    p_a_wins = None
+    result = None
     transitions: dict[str, tuple[str, str]] = {}   # name -> (old_tier, new_tier)
-    fighters_to_remove: list = []
-    for fighter in (winner, loser):
-        old_tier = fighter.tier
-        new_tier = apply_tier_transitions(fighter, pools)
-        if new_tier:
-            transitions[fighter.name] = (old_tier, new_tier)
-        maybe_update_labels(fighter)
-        removed = maybe_evaluate_retirement(fighter, pools, fight_num=i + 1)
-        if not removed:
-            removed = maybe_evaluate_cut(fighter, pools, fight_num=i + 1)
-        if removed:
-            fighters_to_remove.append(fighter)
+    title_bout_ran = False
+
+    if due is not None:
+        event, slot = due
+        if slot.is_title:
+            title_bout_ran = maybe_run_title_fight(
+                slot.weight_class, event.tier_key, pools, org="league",
+                fight_num=i + 1, all_fighters=all_fighters, top_tier_org=event.org,
+            )
         else:
-            maybe_evaluate_weight_move(fighter, pools)
-            maybe_process_weight_transfers(fighter, pools, fight_num=i + 1, sim_day=current_day)
+            cand = slot.fighter_a
+            # Re-validate: the card was built up to a full card's worth of
+            # attempts ago -- cand may have retired/been cut/promoted/
+            # demoted/moved org/become champion since. Skip this slot rather
+            # than force a stale fighter into a fight. Org must match only
+            # for a real-org event -- tier0/tier3 pseudo-entities (see
+            # orgs.events.PSEUDO_ENTITIES) have no meaningful Fighter.org to
+            # compare against.
+            is_pseudo_entity = event.tier_key in ("tier0", "tier3")
+            if cand is not None and cand in all_fighters and cand.tier == event.tier_key \
+               and (is_pseudo_entity or cand.org == event.org) and not is_champion(cand):
+                a = cand
+    # If due is None, nothing is currently due -- skip this attempt (rare
+    # now that tier0/tier3 have their own dedicated cadence too).
 
-    for rf in fighters_to_remove:
-        all_fighters[:] = [f for f in all_fighters if f is not rf]
+    if a is not None:
+        _diag_bump(a.fighter_id, "drawn_a")
+        try:
+            b = pick_opponent(a, pools)
+        except IndexError:
+            # Division pool exhausted — skip this iteration rather than crash.
+            _diag_bump(a.fighter_id, "skip_pool")
+            a = None
+        else:
+            if b is None:
+                # Opponent-avoidance left no eligible non-repeat candidate this
+                # cycle (matchmaking.AVOID_* constants) -- skip rather than
+                # force a repeat. Skip-compounding guard: remember the streak
+                # so pick_opponent can progressively relax the cooldown next
+                # time (see Fighter.avoid_skip_streak / _cooldown_cleared).
+                a.avoid_skip_streak += 1
+                _diag_bump(a.fighter_id, "skip_avoidance")
+                a = None
+            else:
+                a.avoid_skip_streak = 0
 
-    # Check whether a title fight is due in this pool (top_tier_org is only
-    # meaningful at tier4 -- Apex FC / Eastern GP each get their own belt;
-    # The League is a no-op here, see title.maybe_run_title_fight's guard).
-    maybe_run_title_fight(fight_wc, fight_tier, pools, org="league", fight_num=i + 1,
-                          all_fighters=all_fighters, top_tier_org=fight_org)
+    bout_resolved = title_bout_ran
+    if a is not None and b is not None:
+        bout_resolved = True
+
+        # Capture tier+wc(+org) before transitions — title scheduling uses
+        # the pool where the fight took place, not where A ends up after.
+        fight_wc   = a.weight_class
+        fight_tier = a.tier
+        fight_org  = a.org if fight_tier in ("tier1", "tier2", "tier4") else ""
+        current_day = get_sim_day()
+
+        p_a_wins = _true_prob(a.overall, b.overall)
+        decision_mode = decision_mode_for_org(fight_org) if fight_org else "total_score"
+        winner, loser = simulate_fight(a, b, org="league", sim_day=current_day,
+                                        decision_mode=decision_mode)
+        result = winner.fight_history[-1]
+
+        # Win-triggered development boost — fires on the BASE fighter object (not the
+        # effective copy used inside fight resolution), so the gain is durable.
+        apply_win_development_boost(winner)
+        # Style-mixing feedback: fires for both winner and loser, gated on
+        # non-primary-phase time exposure for this fight (see development.py).
+        apply_phase_development_feedback(winner)
+        apply_phase_development_feedback(loser)
+        # Dynamic hype: base win/loss + style modifiers for both participants.
+        update_hype_after_fight(winner, loser)
+        update_hype_after_fight(loser, winner)
+
+        # Apply tier transitions, label updates,
+        # retirement (checked first), then cut (skips already-retired fighters).
+        # Age advancement is now global (advance_all_ages below) -- not per-fight.
+        fighters_to_remove: list = []
+        for fighter in (winner, loser):
+            old_tier = fighter.tier
+            new_tier = apply_tier_transitions(fighter, pools)
+            if new_tier:
+                transitions[fighter.name] = (old_tier, new_tier)
+            maybe_update_labels(fighter)
+            removed = maybe_evaluate_retirement(fighter, pools, fight_num=i + 1)
+            if not removed:
+                removed = maybe_evaluate_cut(fighter, pools, fight_num=i + 1)
+            if removed:
+                fighters_to_remove.append(fighter)
+            else:
+                maybe_evaluate_weight_move(fighter, pools)
+                maybe_process_weight_transfers(fighter, pools, fight_num=i + 1, sim_day=current_day)
+
+        for rf in fighters_to_remove:
+            all_fighters[:] = [f for f in all_fighters if f is not rf]
+
+        # tier1/tier2/tier4 title-due is decided at event-card-construction
+        # time (a dedicated title BoutSlot, handled above) -- this per-bout
+        # check only applies to the tier0/tier3 fallback path, same as
+        # title.maybe_run_title_fight's own tier3 fight-count gate (tier0
+        # always no-ops there, no title format).
+        if fight_tier in ("tier0", "tier3"):
+            maybe_run_title_fight(fight_wc, fight_tier, pools, org="league", fight_num=i + 1,
+                                  all_fighters=all_fighters, top_tier_org=fight_org)
+
+    if not bout_resolved:
+        return False
 
     # The League's own dedicated season/playoff scheduler (Org Identity
-    # session, Part 3) -- gated internally on LEAGUE_FIGHT_INTERVAL, a
-    # no-op most iterations.
-    run_league_season(pools, fight_num=i + 1, sim_day=current_day, all_fighters=all_fighters)
+    # session, Part 3) -- gated by its own event cadence (Phase 2:
+    # events.league_event_due), a no-op most attempts.
+    if league_event_due(current_day):
+        run_league_season(pools, fight_num=i + 1, sim_day=current_day, all_fighters=all_fighters)
 
     # Cross-org free agency sweep (Org Identity session, Part 6) -- gated
     # internally per-fighter on LABEL_UPDATE_INTERVAL, same cadence as labels/cuts.
@@ -442,28 +406,10 @@ def _run_one_bout(
         update_org_rankings(pools)
         maybe_apply_scout_notice(pools, fight_num=i + 1)
 
-    # ── Scheduled Elite fight (option b density fix) ─────────────────────
-    # Injected additively every ELITE_FIGHT_INTERVAL main fights.  Non-Elite
-    # fighters are unaffected; Elite pool replenishment rate is unchanged.
-    # These are fully normal fights — no special org tag, no exclusion from
-    # any downstream system (wins, losses, promotion, demotion, labels,
-    # rankings, hype, development all treat them like any other fight).
-    if ELITE_FIGHT_INTERVAL > 0 and (i + 1) % ELITE_FIGHT_INTERVAL == 0:
-        _ae = pick_scheduled_elite_a(pools)
-        if _ae is not None:
-            _run_additive_elite_fight(_ae, pools, all_fighters, i + 1)
-
-    # ── Discovery fight (under-fought tier4 fighters) ────────────────────
-    # Sibling of the block above, additively injected on its own (deliberately
-    # less frequent) cadence -- see matchmaking.ELITE_DISCOVERY_INTERVAL/
-    # pick_discovery_a for the full rationale. Gives fighters who rarely get
-    # drawn by ordinary matchmaking a bounded, self-limiting shot at building
-    # a real tier4 record, without repeating the rejected option (a) failure
-    # mode (uncapped whole-tier rate = uncapped whole-tier churn).
-    if ELITE_DISCOVERY_INTERVAL > 0 and (i + 1) % ELITE_DISCOVERY_INTERVAL == 0:
-        _da = pick_discovery_a(pools)
-        if _da is not None:
-            _run_additive_elite_fight(_da, pools, all_fighters, i + 1)
+    if winner is None:
+        # Title-only attempt -- nothing to print via the regular-bout display
+        # below; maybe_run_title_fight already printed its own [TITLE] line.
+        return False
 
     if debug:
         if verbose:

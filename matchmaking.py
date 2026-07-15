@@ -21,6 +21,38 @@ DEMOTE_LOSSES_IN_LAST: int   = 4     # losses needed in the last DEMOTE_WINDOW t
 DEMOTE_WINDOW:         int   = 5     # rolling window size for demotion check (tiers 0-3)
 CROSS_TIER_RATE:       float = 0.12  # fraction of fights matched against an adjacent tier
 
+IDLE_WEIGHT_SAT_YEARS: float = 4.0
+"""Idle-weighted fighter-A selection saturation (see pick_idle_weighted). A
+fighter's draw weight grows linearly with years since their last real fight
+(anchored at creation day if they've never fought), capping at
+1 + IDLE_WEIGHT_SAT_YEARS (= 5x a just-fought fighter's weight). Linear-with-
+cap keeps the mechanism gentle: it compresses the no-fight tail without
+turning the schedule into a strict idle-first queue."""
+
+
+def pick_idle_weighted(
+    candidates: list[Fighter], current_day: int, *, exclude: set[str] | None = None,
+) -> Fighter | None:
+    """Weighted-random pick favoring fighters idle longest since their last
+    real fight (matchmaking-audit session). Caller is responsible for any
+    tier/org/champion filtering of `candidates`; `exclude` (fighter_ids) is
+    for a same-card no-repeat rule (Phase 2 event scheduling) -- excluded
+    fighters get weight 0 rather than being dropped from the list, matching
+    the original all-or-nothing "no eligible weight" empty check below."""
+    if not candidates:
+        return None
+    weights: list[float] = []
+    for f in candidates:
+        if exclude and f.fighter_id in exclude:
+            weights.append(0.0)
+            continue
+        anchor = f.last_real_fight_day if f.last_real_fight_day >= 0 else f.created_day
+        idle_years = (current_day - anchor) / 365.25
+        weights.append(1.0 + min(idle_years, IDLE_WEIGHT_SAT_YEARS))
+    if not any(w > 0.0 for w in weights):
+        return None
+    return random.choices(candidates, weights=weights, k=1)[0]
+
 # ── Opponent-avoidance (repeat-matchup prevention) ───────────────────────────
 # Three stacked layers, real-world-matchmaking-shaped: a hard lifetime cap
 # (trilogies happen, tetralogies don't), a cooldown (not immediately), and a
@@ -139,43 +171,22 @@ Increase to flatten (more uniform); decrease to sharpen (tighter clustering). Fi
 # applied forever), which is what makes it structurally safe where option (a)
 # wasn't. See pick_discovery_a's docstring for the full reasoning.
 
-ELITE_FIGHT_INTERVAL: int = 5
-"""One scheduled Elite-vs-Elite fight is injected per this many main-loop fights.
-Additive: the global fight loop is unchanged, non-Elite fighters keep their natural
-fight cadence, and the Elite pool replenishes at the same rate as without this feature.
-Only Elite fighters gain additional appearances from the injected fights.
-
-At interval=5: 3000 main fights produce 600 injected Elite fights (20% extra).
-Each injected fight picks A via pick_scheduled_elite_a() and routes B through
-pick_opponent() / _pick_elite_opponent() so Layers 2+3 remain active.
-Lower values = denser schedule; set to 0 to disable."""
-
 ELITE_DISCOVERY_MAX_FIGHTS: int = 5
 """Eligibility ceiling for pick_discovery_a's density injection: a tier4 fighter
 with FEWER than this many career tier4 fights is eligible to be pulled into an
 extra scheduled fight, on top of whatever they get from ordinary matchmaking.
 Once a fighter crosses this many tier4 fights they age out of this specific
 mechanism for good -- from then on they rely on ordinary matchmaking, or (if
-they won enough to rank) ELITE_FIGHT_INTERVAL's existing ranked-density
+they won enough to rank) pick_scheduled_elite_a's existing ranked-density
 injection instead. This hard per-fighter cap is what keeps this mechanism from
-repeating the rejected option (a) failure mode noted above."""
+repeating the rejected option (a) failure mode noted above.
 
-ELITE_DISCOVERY_INTERVAL: int = 6
-"""One scheduled 'discovery' fight (see pick_discovery_a) injected per this many
-main-loop fights. Swept 10/6/5 (seed 42, 9000-13000 sim-day runs) against two
-metrics: the fraction of a tier4 org+weight-class pool with <=1 career tier4
-fights (the clique-diagnosis metric -- 59% before this feature existed), and
-the average calendar-day gap between a champion's title defenses (target
-~330 days, from TITLE_FIGHT_INTERVAL=9's own tuning).
-  10 (half ELITE_FIGHT_INTERVAL=5's frequency, the original first-pass guess):
-     53% at <=1 fights -- meaningful but modest improvement.
-  6: 44% at <=1 fights, ~403-day average title-defense gap -- best clique
-     improvement while keeping title cadence close to target.
-  5 (same frequency as ELITE_FIGHT_INTERVAL): 47% at <=1 fights (no better
-     than 6, within noise) but compressed the title-defense gap to ~244 days --
-     confirms running both mechanisms in lockstep over-compounds
-     TITLE_FIGHT_INTERVAL's counter, as flagged when this constant was designed.
-Settled on 6. Set to 0 to disable."""
+Phase 2 (event scheduling): pick_scheduled_elite_a/pick_discovery_a no longer
+fire on their own global attempt-interval (ELITE_FIGHT_INTERVAL/
+ELITE_DISCOVERY_INTERVAL, both removed) -- orgs/events.py reserves a fixed
+slot count for each per tier4 card instead (EVENT_SLOT_MIX), folding density
+injection into card construction rather than layering a third independent
+interval on top of event cadence and card size."""
 
 # Gate statistics — how often the Elite ranked-opponent gate fires per sim run.
 _gate_enforced: int = 0   # gate applied, candidates filtered to unranked only
@@ -203,6 +214,16 @@ class ElitePairingRecord:
     opp_name:     str
     opp_rank:     int | None   # None if unranked at time of fight
     pool_type:    str          # "RR" | "RU" | "UR" | "UU"
+    fighter_id:   str = ""
+    opp_id:       str = ""
+    sim_day:      int = -1
+    """fighter_id/sim_day: added Phase 2 (event scheduling) so a diagnostic
+    script driving the real sim.py loop can reconstruct per-fighter,
+    chronologically-ordered appearance logs (tests/verify_elite_matchmaking.py's
+    density-gap check) without needing name-based matching, which is fragile
+    once a fighter retires (dropped from all_fighters) or a name gets
+    recycled (career/academies.py). Purely additive -- no existing reader of
+    this dataclass is affected."""
 
 
 _elite_pairings: list[ElitePairingRecord] = []
@@ -338,12 +359,16 @@ def _pick_elite_opponent(
         opp_name     = opp.name,
         opp_rank     = rank_map.get(opp.fighter_id),
         pool_type    = pool_type,
+        fighter_id   = fighter.fighter_id,
+        opp_id       = opp.fighter_id,
+        sim_day      = get_sim_day(),
     ))
     return opp
 
 
 def pick_scheduled_elite_a(
     pools: dict[str, dict[str, list[Fighter]]],
+    target_org: str | None = None,
 ) -> Fighter | None:
     """Pick a RANKED Elite fighter to be A in a scheduled Elite fight (option b).
 
@@ -357,6 +382,11 @@ def pick_scheduled_elite_a(
     Weight class is chosen uniformly from (WC, org) pairs that have >= 2 ranked
     tier4 fighters IN THE SAME ORG (Org Identity session: hard-partition means
     "ranked" must mean ranked within one org, not the old combined tier4 list).
+
+    target_org: if given, restricts the (WC, org) search to that one org
+    (Phase 2 event scheduling -- orgs/events.py reserves a card slot for this
+    mechanism per org). Default None preserves the original any-schedulable-
+    org behavior.
 
     The League is excluded entirely -- its fighters get fights exclusively
     through orgs/league_season.py's own dedicated scheduler, never through this
@@ -372,7 +402,8 @@ def pick_scheduled_elite_a(
     title.maybe_run_title_fight).
     """
     from orgs.org_registry import ORG_NAMES, THE_LEAGUE_NAME
-    schedulable_orgs = [o for o in ORG_NAMES if o != THE_LEAGUE_NAME]
+    schedulable_orgs = [target_org] if target_org is not None \
+        else [o for o in ORG_NAMES if o != THE_LEAGUE_NAME]
 
     # Normal path: pick (wc, org) with >= 2 ranked, non-champion fighters in
     # that org's tier4 pool.
@@ -414,6 +445,7 @@ def pick_scheduled_elite_a(
 
 def pick_discovery_a(
     pools: dict[str, dict[str, list[Fighter]]],
+    target_org: str | None = None,
 ) -> Fighter | None:
     """Pick an UNDER-FOUGHT Elite fighter to be A in a scheduled 'discovery' fight
     -- the sibling injection to pick_scheduled_elite_a (option b), targeting the
@@ -458,9 +490,15 @@ def pick_discovery_a(
     "over the limit" on paper despite having zero real sim fights, and would
     never receive a discovery-injected fight at all. Same bug class as
     everywhere else -- see Fighter.real_fight_history.
+
+    target_org: if given, restricts the (WC, org) search to that one org
+    (Phase 2 event scheduling -- orgs/events.py reserves a card slot for this
+    mechanism per org). Default None preserves the original any-schedulable-
+    org behavior.
     """
     from orgs.org_registry import ORG_NAMES, THE_LEAGUE_NAME
-    schedulable_orgs = [o for o in ORG_NAMES if o != THE_LEAGUE_NAME]
+    schedulable_orgs = [target_org] if target_org is not None \
+        else [o for o in ORG_NAMES if o != THE_LEAGUE_NAME]
 
     def _tier4_fight_count(f: Fighter) -> int:
         return sum(1 for r in f.real_fight_history if r.tier == "tier4")

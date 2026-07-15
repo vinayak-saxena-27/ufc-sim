@@ -98,9 +98,11 @@ POACH_NEED_MAX_MULT: float = 2.0
 scouting (up to 2x base), deep Apex pool = less urgency (down to 0.5x)."""
 
 MID_TITLE_RUN_WINDOW: int = 3
-"""A champion with a title defense due within this many pool-fights is
-considered 'mid-title-run' for the refusal check (see
-title.fights_until_next_title_fight)."""
+"""A champion with a title defense due within this many events (tier4 --
+Phase 2 event scheduling; was pool-fights pre-Phase-2) is considered
+'mid-title-run' for the refusal check (see title.fights_until_next_title_fight,
+which now delegates to orgs/events.py for tier4). Numeric threshold
+unchanged; only the unit of what it's compared against shifted."""
 
 REFUSAL_PROB_MID_TITLE_RUN: float = 0.65
 """Probability a mid-title-run champion refuses an Apex approach (Apex isn't
