@@ -315,8 +315,22 @@ def _build_event(org: str, tier_key: str, pools: dict, current_day: int) -> Even
     used_ids: set[str] = set()
 
     if not is_pseudo:
+        # Inaugural card: crown a champion in every division at once instead
+        # of waiting out the normal TITLE_EVENTS_INTERVAL countdown division
+        # by division (tier4's interval alone is 29 events -- ~319 days of
+        # every title sitting vacant otherwise). Each org reaches event #1
+        # independently (whenever it's first due in get_next_due_bout_slot's
+        # priority queue), so this naturally lands at a different sim day
+        # per org rather than all at once. Counters stay at 0 afterward, so
+        # the very next defense for each division follows the normal cadence
+        # starting from this card.
+        is_inaugural_card = event.number == 1
         for wc in WEIGHT_CLASSES:
             key = (wc, tier_key, org)
+            if is_inaugural_card:
+                _title_event_counters[key] = 0
+                event.card.append(BoutSlot(weight_class=wc, is_title=True))
+                continue
             _title_event_counters[key] = _title_event_counters.get(key, 0) + 1
             if _title_event_counters[key] >= TITLE_EVENTS_INTERVAL.get(tier_key, 0):
                 _title_event_counters[key] = 0
