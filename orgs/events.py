@@ -206,6 +206,25 @@ class EventRecord:
     title_slots: int
 
 
+@dataclass(frozen=True)
+class BoutRecord:
+    """One resolved bout, tagged with the numbered event it belongs to (for
+    real orgs only -- tier0/tier3 pseudo-entities and pre-event-system fights
+    don't get logged, see log_bout's callers in sim.py/title.py). Purely
+    additive reporting data alongside EventRecord -- no effect on matchmaking
+    or scheduling."""
+    org: str
+    event_number: int
+    weight_class: str
+    is_title: bool
+    fighter_a_name: str
+    fighter_b_name: str
+    winner_name: str
+    method: str
+    rounds_completed: int
+    sim_day: int
+
+
 # ── State (reset per sim, mirrors title.py/league_season.py's own registries) ─
 
 _next_event_due_day: dict[str, int] = {}
@@ -213,6 +232,7 @@ _current_event:      dict[str, Event | None] = {}
 _event_number:       dict[str, int] = {}
 _title_event_counters: dict[tuple[str, str, str], int] = {}
 _event_history:      list[EventRecord] = []
+_bout_history:       list[BoutRecord] = []
 
 _EVENT_LOG_CAP: int = 5000
 
@@ -224,10 +244,33 @@ def reset_events() -> None:
     _event_number.clear()
     _title_event_counters.clear()
     _event_history.clear()
+    _bout_history.clear()
 
 
 def get_event_history() -> list[EventRecord]:
     return list(_event_history)
+
+
+def log_bout(
+    org: str, event_number: int, weight_class: str, is_title: bool,
+    fighter_a_name: str, fighter_b_name: str, winner_name: str,
+    method: str, rounds_completed: int, sim_day: int,
+) -> None:
+    """Record one resolved bout against its numbered event, for archive/
+    reporting use (fight-card UI). Called from sim.py (regular event-slot
+    bouts) and title.py (title bouts) right after a bout resolves -- never
+    from the matchmaking/scheduling path itself."""
+    if len(_bout_history) < _EVENT_LOG_CAP:
+        _bout_history.append(BoutRecord(
+            org=org, event_number=event_number, weight_class=weight_class,
+            is_title=is_title, fighter_a_name=fighter_a_name, fighter_b_name=fighter_b_name,
+            winner_name=winner_name, method=method, rounds_completed=rounds_completed,
+            sim_day=sim_day,
+        ))
+
+
+def get_bout_history() -> list[BoutRecord]:
+    return list(_bout_history)
 
 
 def log_league_event(scheduled_day: int, number: int, card_size: int, title_slots: int) -> None:

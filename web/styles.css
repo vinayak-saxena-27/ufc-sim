@@ -308,6 +308,214 @@ table.wikitable th.sortable-col:hover { background: #dde3e8; }
   color: var(--muted);
 }
 
+/* ── Organization cards (tiered information density) ─────────────────── */
+/* Top-tier orgs get the richest treatment (champion + full roster inline),
+   mid-major gets a medium card (champion + recent-event teaser, roster is
+   one click away), regional stays the plain directory table -- density
+   scales down with the org's real-world prominence. */
+
+.org-card {
+  border: 1px solid var(--border);
+  background: #fff;
+  margin: 0 0 1.4em;
+  padding: 0;
+}
+
+.org-card--top {
+  border-left: 4px solid #8a6d1f;
+}
+
+.org-card--mid {
+  border-left: 3px solid #36577a;
+  display: inline-block;
+  width: 100%;
+}
+
+.org-card-head {
+  background: var(--box-bg);
+  border-bottom: 1px solid var(--border);
+  padding: 0.6em 0.9em;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1em;
+  flex-wrap: wrap;
+}
+
+.org-card-head h3 { margin: 0; font-size: 1.3em; }
+.org-card--mid .org-card-head h3 { font-size: 1.1em; }
+
+.org-card-meta { color: var(--muted); font-size: 0.88em; }
+
+.org-card-body { padding: 0.8em 0.9em 0.9em; }
+
+.org-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 0 1em;
+}
+
+/* Recent-event teaser strip, shared by top-tier and mid-major cards */
+.event-teaser {
+  background: #faf6e8;
+  border: 1px solid #e2d5a8;
+  border-left: 3px solid #8a6d1f;
+  padding: 0.5em 0.8em;
+  margin: 0 0 0.8em;
+  font-size: 0.92em;
+}
+
+.event-teaser .et-label {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 0.75em;
+  color: #8a6d1f;
+  font-weight: bold;
+}
+
+.event-teaser .et-bout { margin-top: 0.15em; }
+.event-teaser .et-bout a { font-weight: bold; }
+.event-teaser .et-more { margin-top: 0.2em; }
+.event-teaser .et-more a { font-size: 0.9em; }
+
+.regional-directory { opacity: 0.96; }
+.regional-directory table.wikitable { font-size: 0.88em; }
+
+
+/* ═══════════════════════════════════════════════════════════════════
+   Event / fight-card page — broadcast treatment (deliberately breaks
+   from the encyclopedia look; scoped under #modal-box.event-modal so it
+   never leaks into the rest of the light-mode UI).
+   ═══════════════════════════════════════════════════════════════════ */
+
+#modal-box.event-modal {
+  background: #0c0d0f;
+  border-color: #2b2d31;
+  color: #eef0f2;
+  padding: 0;
+  max-width: 880px;
+}
+
+#modal-box.event-modal #modal-close { color: #9a9ea5; }
+#modal-box.event-modal #modal-close:hover { color: #eef0f2; }
+
+.ec-back { padding: 1em 1.4em 0; margin: 0; }
+.ec-back a { color: #9a9ea5; font-size: 0.85em; text-transform: uppercase; letter-spacing: 0.05em; }
+.ec-back a:hover { color: #eef0f2; }
+
+.ec-hero {
+  position: relative;
+  padding: 1.6em 1.4em 1.8em;
+  text-align: center;
+  background:
+    radial-gradient(ellipse 700px 320px at 50% -10%, rgba(255,77,46,.20), transparent 60%),
+    linear-gradient(180deg, #121316, #0c0d0f 75%);
+  border-bottom: 1px solid #2b2d31;
+}
+
+.ec-hero .ec-tag {
+  font-family: Arial, Helvetica, sans-serif;
+  font-weight: 900;
+  color: #ff4d2e;
+  letter-spacing: 0.12em;
+  font-size: 0.85em;
+  text-transform: uppercase;
+}
+
+.ec-hero .ec-num {
+  font-weight: 900;
+  font-size: 1.9em;
+  letter-spacing: 0.01em;
+  margin: 0.1em 0 0.1em;
+  text-transform: uppercase;
+}
+
+.ec-hero .ec-sub {
+  color: #9a9ea5;
+  font-size: 0.85em;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.ec-matchup {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1.2em;
+  margin: 1.3em auto 0;
+  max-width: 640px;
+}
+
+.ec-fighter { flex: 1; text-align: center; min-width: 0; }
+
+.ec-fighter .ec-silhouette {
+  width: 72px; height: 72px; margin: 0 auto 0.4em;
+  border-radius: 50%;
+  background: linear-gradient(160deg, #1e2024, #17181b);
+  border: 2px solid #2b2d31;
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 900; font-size: 1.3em; color: #9a9ea5;
+}
+
+.ec-fighter.ec-champ .ec-silhouette { border-color: #e8b64f; box-shadow: 0 0 0 3px rgba(232,182,79,.15); }
+.ec-fighter .ec-belt { color: #e8b64f; font-size: 0.7em; letter-spacing: 0.08em; text-transform: uppercase; font-weight: bold; margin-bottom: 0.25em; }
+.ec-fighter .ec-name { font-weight: 900; font-size: 1.05em; letter-spacing: 0.01em; }
+.ec-fighter .ec-name a { color: #eef0f2; text-decoration: none; }
+.ec-fighter .ec-name a:hover { color: #ff8f76; }
+.ec-vs { font-weight: 900; font-size: 1.2em; color: #7a2a1c; padding-top: 1.1em; flex-shrink: 0; }
+
+.ec-result-strip {
+  margin: 1.3em auto 0; max-width: 520px;
+  background: #17181b; border: 1px solid #2b2d31; border-radius: 6px;
+  padding: 0.55em 1em; display: flex; align-items: center; justify-content: center;
+  gap: 0.5em; font-size: 0.85em; flex-wrap: wrap;
+}
+.ec-result-strip .ec-win-tag { color: #33c98d; font-weight: bold; text-transform: uppercase; letter-spacing: 0.03em; font-size: 0.85em; }
+.ec-result-strip .ec-dot { color: #2b2d31; }
+.ec-result-strip .ec-method { font-weight: bold; }
+
+.ec-section { padding: 1.6em 1.4em 0; }
+.ec-section h2 {
+  font-family: Arial, Helvetica, sans-serif;
+  font-weight: 900; letter-spacing: 0.03em; text-transform: uppercase;
+  font-size: 1em; border-bottom: 1px solid #2b2d31; padding-bottom: 0.5em;
+  margin: 0 0 0.8em; color: #eef0f2;
+}
+
+.ec-list { display: flex; flex-direction: column; gap: 0.45em; }
+.ec-row {
+  display: flex; align-items: center; gap: 0.7em;
+  background: #17181b; border: 1px solid #2b2d31; border-radius: 6px;
+  padding: 0.55em 0.8em; font-size: 0.86em; flex-wrap: wrap;
+}
+.ec-row .ec-billing {
+  width: 6em; flex-shrink: 0; font-size: 0.7em; text-transform: uppercase;
+  letter-spacing: 0.05em; color: #9a9ea5;
+}
+.ec-row .ec-billing.ec-main { color: #ff4d2e; font-weight: bold; }
+.ec-row .ec-matchup-txt { flex: 1; min-width: 12em; }
+.ec-row .ec-matchup-txt a { color: #eef0f2; text-decoration: none; }
+.ec-row .ec-matchup-txt a:hover { color: #ff8f76; }
+.ec-row .ec-matchup-txt .ec-winner { font-weight: bold; }
+.ec-row .ec-wc { color: #9a9ea5; font-size: 0.85em; text-transform: uppercase; }
+.ec-row .ec-method-txt { color: #9a9ea5; font-size: 0.85em; text-align: right; flex-shrink: 0; }
+
+.ec-footer { text-align: center; color: #9a9ea5; font-size: 0.78em; padding: 1.8em 1.4em 1.6em; letter-spacing: 0.03em; }
+
+/* League season/playoff block (kept in the encyclopedia palette, not the
+   broadcast one -- structurally a standings+bracket, not a numbered card,
+   see web/app.js renderLeagueSeasonBlock) */
+.league-season {
+  border: 1px solid var(--border);
+  background: var(--box-bg);
+  padding: 0.7em 0.9em;
+  margin: 0 0 0.8em;
+  font-size: 0.92em;
+}
+.league-season .ls-title { font-weight: bold; margin-bottom: 0.3em; }
+.league-season .ls-champ { color: #8a6d1f; font-weight: bold; }
+
+
 /* ── Small helpers ────────────────────────────────────────────────────── */
 
 .nowrap { white-space: nowrap; }

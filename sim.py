@@ -76,7 +76,7 @@ from orgs.org_movement import (
     MAX_APEX_ROSTER,
 )
 from orgs.events import (
-    get_next_due_bout_slot, league_event_due, reset_events, get_event_history,
+    get_next_due_bout_slot, league_event_due, reset_events, get_event_history, log_bout,
 )
 from sim_calendar import reset_sim_clock, advance_sim_clock, get_sim_day, SIM_DAYS_PER_FIGHT
 from career.replenishment import (
@@ -258,6 +258,7 @@ def _run_one_bout(
             title_bout_ran = maybe_run_title_fight(
                 slot.weight_class, event.tier_key, pools, org="league",
                 fight_num=i + 1, all_fighters=all_fighters, top_tier_org=event.org,
+                event_number=event.number,
             )
         else:
             cand = slot.fighter_a
@@ -312,6 +313,17 @@ def _run_one_bout(
         winner, loser = simulate_fight(a, b, org="league", sim_day=current_day,
                                         decision_mode=decision_mode)
         result = winner.fight_history[-1]
+
+        # Fight-card archive (additive, reporting-only): only real-org events
+        # (tier1/tier2/tier4) have a numbered card worth logging -- tier0/tier3
+        # pseudo-entities have no Fighter.org concept, see orgs/events.py.
+        if due is not None and not is_pseudo_entity:
+            log_bout(
+                org=event.org, event_number=event.number, weight_class=fight_wc,
+                is_title=False, fighter_a_name=a.name, fighter_b_name=b.name,
+                winner_name=winner.name, method=result.method,
+                rounds_completed=result.rounds_completed, sim_day=current_day,
+            )
 
         # Win-triggered development boost — fires on the BASE fighter object (not the
         # effective copy used inside fight resolution), so the gain is durable.
