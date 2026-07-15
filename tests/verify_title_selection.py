@@ -10,14 +10,22 @@ Checks (Elite tier only, where rankings matter):
 
 Run with: python verify_title_selection.py
 N_FIGHTS controls sim length; SEED for reproducibility.
+
+Phase 2 (event scheduling): this used to hand-roll its own mini fight loop
+(pick_opponent + a raw maybe_run_title_fight call every bout) instead of
+driving the real sim.py loop -- that parallel loop never called
+orgs/events.py's due-check, so it broke outright once tier1/tier2/tier4
+title-due detection moved to event-card construction (calling
+maybe_run_title_fight unconditionally for tier4 with no due-gate left would
+fire a title fight on literally every tier4 bout). Rewritten to drive the
+actual sim.init_sim/step_sim path instead -- exercises the real scheduling
+code, not a hand-rolled copy that can silently drift out of sync with it
+(exactly the failure mode that broke the old version of this file).
 """
 from __future__ import annotations
 
 import os, sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-import random
-import sys
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -27,112 +35,16 @@ SEED     = 42
 _PASS = "PASS"
 _FAIL = "FAIL"
 
-# ── Sim bootstrap (mirrors sim.py setup) ─────────────────────────────────────
+# ── Sim run (real sim.py loop -- see module docstring) ───────────────────────
 
-random.seed(SEED)
-
-from career.tiers        import generate_all_tiers
-from matchmaking  import (
-    pick_opponent, pick_scheduled_elite_a,
-    apply_tier_transitions, reset_gate_stats, reset_elite_pairings,
-    ELITE_FIGHT_INTERVAL,
-)
-from engine.fight        import simulate_fight
-from career.labels       import maybe_update_labels, reset_title_registry
-from career.retirement   import maybe_evaluate_retirement, maybe_retire_inactive, reset_retirement_scanning
-from career.cuts         import maybe_evaluate_cut, reset_cut_registry
-from career.rankings     import update_rankings, get_rankings, get_ranked_ids, reset_rankings, RANKINGS_UPDATE_INTERVAL
-from title        import (
-    maybe_run_title_fight, reset_title_scheduling, get_title_history,
-    TitleFightRecord,
-)
-from sim_calendar import advance_sim_clock, get_sim_day, reset_sim_clock
-from career.age          import advance_all_ages, reset_age_advancement
-
-# Build initial population and pool structure
-pools = generate_all_tiers(scale=1.0)
-all_fighters = [
-    f
-    for wc_pools in pools.values()
-    for tier_pool in wc_pools.values()
-    for f in tier_pool
-]
-reset_gate_stats()
-reset_elite_pairings()
-reset_rankings()
-reset_title_scheduling()
-reset_title_registry()
-reset_cut_registry()
-reset_sim_clock()
-reset_age_advancement()
-reset_retirement_scanning()
-
-# ── Run sim ───────────────────────────────────────────────────────────────────
+import sim as simmod
+from title import get_title_history
 
 print(f"Running {N_FIGHTS} fights (seed={SEED}) ...\n")
 print("=" * 70)
 
-total_fight_idx = 0
-
-
-def _run_fight_cycle(fa, fb, fight_num, org="league"):
-    global all_fighters
-    fight_wc    = fa.weight_class
-    fight_tier  = fa.tier
-    current_day = get_sim_day()
-    winner, loser = simulate_fight(fa, fb, org=org, sim_day=current_day)
-    to_remove = []
-    for fighter in (winner, loser):
-        apply_tier_transitions(fighter, pools)
-        maybe_update_labels(fighter)
-        removed = maybe_evaluate_retirement(fighter, pools, fight_num=fight_num)
-        if not removed:
-            removed = maybe_evaluate_cut(fighter, pools, fight_num=fight_num)
-        if removed:
-            to_remove.append(fighter)
-    for rf in to_remove:
-        all_fighters[:] = [f for f in all_fighters if f is not rf]
-    maybe_run_title_fight(fight_wc, fight_tier, pools, org=org,
-                          fight_num=fight_num, all_fighters=all_fighters)
-    advance_sim_clock()
-    advance_all_ages(all_fighters)
-
-
-for i in range(N_FIGHTS):
-    if not all_fighters:
-        break
-
-    a = random.choice(all_fighters)
-    try:
-        b = pick_opponent(a, pools)
-    except IndexError:
-        continue
-    if b is None:
-        continue
-
-    _run_fight_cycle(a, b, fight_num=total_fight_idx + 1)
-    total_fight_idx += 1
-
-    newly_retired = maybe_retire_inactive(all_fighters, pools, fight_num=total_fight_idx)
-    for rf in newly_retired:
-        all_fighters[:] = [f for f in all_fighters if f is not rf]
-
-    if total_fight_idx % RANKINGS_UPDATE_INTERVAL == 0:
-        update_rankings(pools)
-
-    # Scheduled Elite fight (option b density fix -- unchanged)
-    if ELITE_FIGHT_INTERVAL > 0 and (i + 1) % ELITE_FIGHT_INTERVAL == 0:
-        ae = pick_scheduled_elite_a(pools)
-        if ae is not None:
-            try:
-                be = pick_opponent(ae, pools)
-            except IndexError:
-                be = None
-            if be is not None:
-                _run_fight_cycle(ae, be, fight_num=total_fight_idx + 1)
-                total_fight_idx += 1
-                if total_fight_idx % RANKINGS_UPDATE_INTERVAL == 0:
-                    update_rankings(pools)
+simmod.init_sim(scale=1.0, seed=SEED, debug=False)
+simmod.step_sim(N_FIGHTS, verbose=False)
 
 print("=" * 70)
 print()
@@ -207,6 +119,10 @@ fallback_pct = 100 * fallback_count / len(elite_records) if elite_records else 0
 # via a population trace (see career/tiers.py's TIER_POPULATION comment) and
 # fixed by raising tier4's seed population to 20 -- swept 20/25/30 at seeds
 # 42+7, 20 was the minimum tested value clearing this bound at both.
+#
+# Phase 2: this now drives the real sim.py loop, which DOES run replenishment,
+# so the Elite pool no longer collapses the way the old closed-system version
+# of this test did -- this bound has real headroom now, not just at the edge.
 ok3 = fallback_pct <= 20.0
 result3 = _PASS if ok3 else _FAIL
 print(f"CHECK 3  Fallback rate is low  [{result3}]")

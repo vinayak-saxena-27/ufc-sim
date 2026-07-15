@@ -271,8 +271,16 @@ def _spawn(
     forced_org: tier4 only -- passed through to generate_tier_fighter so a
     per-org backstop refill lands on the specific org that was short, instead
     of the generic weighted-random assign_org().
+
+    Presim history is only backfilled for tier1-tier4 spawns (an
+    already-established tier, same plausibility argument as lateral
+    transfers) -- tier0 spawns are true debuting rookies and start blank
+    (matchmaking-improvement Phase 2, presim-scope-bug fix). This covers
+    both academy prospects (always tier0) and the population-floor backstop
+    (any tier).
     """
-    f = generate_tier_fighter(template_name, tier_key, weight_class, academy=academy, forced_org=forced_org)
+    f = generate_tier_fighter(template_name, tier_key, weight_class, academy=academy, forced_org=forced_org,
+                               include_presim_history=(tier_key != "tier0"))
     pools[weight_class][tier_key].append(f)
     all_fighters.append(f)
 

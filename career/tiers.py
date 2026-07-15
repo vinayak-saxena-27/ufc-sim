@@ -150,6 +150,39 @@ _PRESIM_METHOD_WEIGHTS: dict[str, float] = {"decision": 0.55, "KO/TKO": 0.30, "s
 those only fire when the sim actually resolves a fight) -- just gives the
 fight-history table plausible variety instead of "decision" 100% of the time."""
 
+_PRESIM_TAPER_START_YEARS: float = 10.0
+"""Years of (assumed) career before the fight-count ceiling starts tapering
+below the flat _PRESIM_FIGHTS_PER_YEAR rate."""
+
+_PRESIM_TAPER_RATE: float = 1.0
+"""Fights/year credited toward the ceiling beyond _PRESIM_TAPER_START_YEARS --
+lower than _PRESIM_FIGHTS_PER_YEAR because sustaining a high fight rate for
+15-20 years running is the rare exception, not the norm."""
+
+_PRESIM_HARD_CAP: int = 40
+"""Absolute ceiling on backfilled fight count, any career length. A real
+fighter deep into an unusually long, durable career might reach 30-40 total
+fights after 15-20 years of activity -- that's the rare tail this caps
+against, not something ordinary generation should produce casually."""
+
+
+def _presim_fight_ceiling(years_active: float) -> int:
+    """Max plausible backfilled fight count for a career this long.
+
+    Grows linearly at _PRESIM_FIGHTS_PER_YEAR up to _PRESIM_TAPER_START_YEARS,
+    then tapers to _PRESIM_TAPER_RATE beyond that (few fighters sustain a high
+    cadence for 15+ years), capped absolutely at _PRESIM_HARD_CAP. Without this,
+    n_fights = years_active * rate is unbounded -- a tier4 fighter generated at
+    the max age clamp (37, years_active=19) with just a 2-3 sigma high `rate`
+    draw could reach 60-70+ backfilled fights (and, since a strong fighter's
+    win probability stays well above 50% most of the ramp, 60+ wins with it)."""
+    if years_active <= _PRESIM_TAPER_START_YEARS:
+        raw = years_active * _PRESIM_FIGHTS_PER_YEAR
+    else:
+        raw = (_PRESIM_TAPER_START_YEARS * _PRESIM_FIGHTS_PER_YEAR
+               + (years_active - _PRESIM_TAPER_START_YEARS) * _PRESIM_TAPER_RATE)
+    return min(_PRESIM_HARD_CAP, round(raw))
+
 
 def generate_presim_history(fighter: Fighter) -> None:
     """
@@ -180,10 +213,22 @@ def generate_presim_history(fighter: Fighter) -> None:
     (which explicitly includes weight_class=="" entries) and win/loss
     properties, but never treated as a real activity/inactivity signal
     (calendar-based checks like sim_calendar._last_stamped_day skip sim_day=-1).
+
+    Draws from a LOCAL rng (seeded by a single draw off the shared global
+    stream) rather than the global `random` module directly. This function's
+    internal draw count varies per fighter (proportional to backfilled fight
+    count) -- pulling from the global stream directly means any change to
+    that count (e.g. the ceiling below) reshuffles every fighter generated
+    afterward in the same run, cascading through the rest of that population
+    and any global-seed-dependent test built on top of it. A local rng
+    bounds this function's "blast radius" on the shared stream to exactly
+    one draw, independent of internal complexity, while staying fully
+    deterministic under a fixed global seed.
     """
+    local_rng = random.Random(random.random())
     years_active = max(0.0, fighter.age - _PRESIM_DEBUT_AGE)
-    rate = max(0.0, random.gauss(_PRESIM_FIGHTS_PER_YEAR, _PRESIM_FIGHTS_PER_YEAR_STD))
-    n_fights = round(years_active * rate)
+    rate = max(0.0, local_rng.gauss(_PRESIM_FIGHTS_PER_YEAR, _PRESIM_FIGHTS_PER_YEAR_STD))
+    n_fights = min(round(years_active * rate), _presim_fight_ceiling(years_active))
     if n_fights <= 0:
         return
 
@@ -196,11 +241,11 @@ def generate_presim_history(fighter: Fighter) -> None:
         frac = i / max(1, n_fights - 1)
         opp_baseline = start_baseline + frac * (end_baseline - start_baseline)
         win_p = 1.0 / (1.0 + 10.0 ** (-(fighter.overall - opp_baseline) / SCALE))
-        outcome = "win" if random.random() < win_p else "loss"
+        outcome = "win" if local_rng.random() < win_p else "loss"
         fighter.fight_history.append(FightResult(
             opponent_name="Uncredited Opponent",
             outcome=outcome,
-            method=random.choices(methods, weights=method_weights, k=1)[0],
+            method=local_rng.choices(methods, weights=method_weights, k=1)[0],
             org="",
             tier=fighter.tier,
             rounds_completed=3,
@@ -214,6 +259,7 @@ def generate_tier_fighter(
     *,
     academy: Academy | None = None,
     forced_org: str | None = None,
+    include_presim_history: bool = True,
 ) -> Fighter:
     """
     Creates a fighter whose overall centers on the tier distribution and whose
@@ -230,6 +276,17 @@ def generate_tier_fighter(
              the weighted-random assign_org() -- used by replenishment.py's
              per-org backstop to refill a SPECIFIC org's deficit rather than
              letting generic template weighting (which skews Apex-heavy) decide.
+    include_presim_history: whether to backfill a fabricated pre-sim career
+             (see generate_presim_history). Defaults True for the initial
+             day-0 population (generate_all_tiers) and every other existing
+             caller. career/replenishment.py passes False for tier0 mid-run
+             spawns (academy prospects, tier0 backstop refills) -- true
+             debuting rookies should start blank, not with a fake career
+             (matchmaking-improvement Phase 2, presim-scope-bug fix).
+             tier1-tier4 mid-run spawns (backstop refills into an
+             already-established tier, laterals) still get one -- an age-30
+             "Elite" fighter with zero fights is exactly as implausible as
+             the lateral-transfer case this feature was built to fix.
     """
     tier = TIER_CONFIG[tier_key]
     cfg  = TEMPLATES[template_name]
@@ -278,7 +335,8 @@ def generate_tier_fighter(
         created_day=get_sim_day(),
         **attrs,
     )
-    generate_presim_history(fighter)
+    if include_presim_history:
+        generate_presim_history(fighter)
     # Org Identity sessions: fighters generated directly into tier2 (mid-major)
     # or tier4 (initial population pyramid) need an org immediately, same as
     # fighters who PROMOTE into those tiers mid-sim (see

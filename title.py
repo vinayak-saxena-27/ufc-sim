@@ -104,21 +104,15 @@ adjust here; no other file needs to change.
 """
 
 TITLE_FIGHT_INTERVAL_BY_TIER: dict[str, int] = {
-    "tier1": 6,
-    "tier2": 6,
     "tier3": TITLE_FIGHT_INTERVAL,
-    "tier4": TITLE_FIGHT_INTERVAL,
 }
-"""Per-tier override of TITLE_FIGHT_INTERVAL (matchmaking-audit session).
-The counter for an org-bearing tier increments only on fights whose fighter A
-belongs to that specific (weight_class, org) pool -- and a regional/mid-major
-org's slice of one weight class is only ~4-8 fighters, so at the flat
-interval a small org accumulated 18 pool-fights every FEW YEARS. Measured on
-a 75-sim-year run: non-tier4 champion defense gaps averaged 1253 days, and
-since a reigning champion can't take ordinary fights, tier1/tier2 champions
-sat frozen for decades (worst observed: 53 years without a defense). tier3
-(whole-tier pool, no org split) and tier4 (large org pools) keep the flat
-value; the small-pool tiers run a 3x faster counter."""
+"""Per-tier override of TITLE_FIGHT_INTERVAL. tier3-only as of Phase 2 (event
+scheduling): tier1/tier2/tier4 are org-bearing, so their title-due decision
+now lives in orgs/events.py's TITLE_EVENTS_INTERVAL (counted in events, not
+fights, and decided at card-construction time) -- maybe_run_title_fight is
+only ever called for those tiers via an already-due title BoutSlot, so no
+fight-count gate is needed here anymore. tier3 has no org/event concept
+(whole-tier pool, no org split), so it keeps the original fight-count gate."""
 
 _MIN_POOL_SIZE: int = 2   # need at least 2 fighters to hold a title fight
 
@@ -191,13 +185,24 @@ def get_title_history() -> list[TitleFightRecord]:
 
 
 def fights_until_next_title_fight(weight_class: str, tier_key: str, org: str = "") -> int:
-    """How many more regular fights in this (weight_class, tier_key[, org]) pool
-    before a title fight is due. Used by orgs/org_movement.py (Part 6) to
-    operationalize 'has a scheduled title defense within N fights' for the
-    Apex-poach mid-title-run refusal case -- there's no separate per-fighter
-    schedule anywhere in this codebase, just this pool-level countdown, so
-    that's what "imminent title defense" means here."""
-    key = (weight_class, tier_key, org if tier_key in ("tier1", "tier2", "tier4") else "")
+    """How many more regular fights (tier3) or events (tier1/tier2/tier4) in
+    this (weight_class, tier_key[, org]) pool before a title fight is due.
+    Used by orgs/org_movement.py (Part 6) to operationalize 'has a scheduled
+    title defense within N fights' for the Apex-poach mid-title-run refusal
+    case -- there's no separate per-fighter schedule anywhere in this
+    codebase, just this pool-level countdown, so that's what "imminent title
+    defense" means here.
+
+    tier1/tier2/tier4 delegate to orgs/events.py (Phase 2: title-due
+    detection for org-bearing tiers now happens at event-card-construction
+    time, not on this module's own fight counter) -- the returned number
+    means "events remaining," not "fights remaining," for those tiers.
+    org_movement.py's MID_TITLE_RUN_WINDOW threshold is unchanged; only the
+    unit of what it's comparing against shifted."""
+    if tier_key in ("tier1", "tier2", "tier4"):
+        from orgs.events import get_title_event_countdown
+        return get_title_event_countdown(weight_class, tier_key, org)
+    key = (weight_class, tier_key, "")
     interval = TITLE_FIGHT_INTERVAL_BY_TIER.get(tier_key, TITLE_FIGHT_INTERVAL)
     return interval - _fight_counters.get(key, 0)
 
@@ -505,13 +510,19 @@ def maybe_run_title_fight(
         return False   # The League's title comes from playoffs, not this path
 
     reg_org = top_tier_org if tier_key in ("tier1", "tier2", "tier4") else ""
-    key = (weight_class, tier_key, reg_org)
-    _fight_counters[key] = _fight_counters.get(key, 0) + 1
-    if _fight_counters[key] < TITLE_FIGHT_INTERVAL_BY_TIER.get(tier_key, TITLE_FIGHT_INTERVAL):
-        return False
+
+    if tier_key == "tier3":
+        # No org/event concept at this tier -- keep the original fight-count gate.
+        key = (weight_class, tier_key, "")
+        _fight_counters[key] = _fight_counters.get(key, 0) + 1
+        if _fight_counters[key] < TITLE_FIGHT_INTERVAL_BY_TIER.get(tier_key, TITLE_FIGHT_INTERVAL):
+            return False
+        _fight_counters[key] = 0
+    # tier1/tier2/tier4: due-ness was already decided by orgs/events.py at
+    # card-construction time (this function is only called for those tiers
+    # via an already-due title BoutSlot) -- no gate needed here.
 
     # Title fight is due.
-    _fight_counters[key] = 0
     pool = pools[weight_class][tier_key]
     if reg_org:
         pool = [f for f in pool if f.org == reg_org]

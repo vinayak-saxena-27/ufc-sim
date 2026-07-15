@@ -8,8 +8,13 @@ SEPARATE DEDICATED SCHEDULER, fully decoupled from the normal per-fight random
 matchmaking cadence: The League's tier4 fighters are excluded from sim.py's
 main-loop random draw entirely (see sim.py wiring) and from
 matchmaking.pick_scheduled_elite_a's density-fight injection -- every League
-fight they have comes from run_league_season() below, called once per
-main-loop iteration on its own LEAGUE_FIGHT_INTERVAL cadence.
+fight they have comes from run_league_season() below.
+
+Phase 2 (event scheduling): the call is now gated by the caller (sim.py) via
+orgs/events.py's league_event_due(), sharing the same EVENT_INTERVAL_DAYS
+cadence table every other org's events use, rather than an internal
+LEAGUE_FIGHT_INTERVAL fight-attempt counter -- this module's own bracket/
+points logic (_run_one_fight, _run_playoffs, season accrual) is unchanged.
 
 ## Format (first-pass, concrete values)
 
@@ -71,16 +76,10 @@ from orgs.org_registry import THE_LEAGUE_NAME
 
 # ── Tuning constants (first-pass, documented) ────────────────────────────────
 
-LEAGUE_FIGHT_INTERVAL: int = 4
-"""One League regular-season fixture is attempted per this many main-loop
-iterations -- same shape as matchmaking.ELITE_FIGHT_INTERVAL's density-fight
-injection, just routed through this module's own scheduler instead."""
-
 LEAGUE_SEASON_LENGTH: int = 20
 """Regular-season fights per weight class before playoffs trigger. First-pass:
-with LEAGUE_FIGHT_INTERVAL=4 and a 2000-fight sim, ~500 League ticks occur,
-so a weight class reaching 20 fights (a full season) multiple times over a
-run is expected -- enough to observe several playoff cycles."""
+sized so a weight class reaching 20 fights (a full season) multiple times
+over a run is expected -- enough to observe several playoff cycles."""
 
 LEAGUE_PLAYOFF_SIZE: int = 4
 """Top-N point-scorers advance to the playoff bracket. Degrades to fewer if
@@ -285,6 +284,13 @@ def _run_playoffs(
         top_scorers=top_scorers, semifinal_results=semifinal_results,
         final_result=final_result, champion_name=champion_name,
     ))
+    # Additive: log this playoff round into orgs/events.py's shared event
+    # history too (purely for future archive/reporting use -- no behavior
+    # change). card_size = however many fights actually ran this round.
+    from orgs.events import log_league_event
+    _n_fights = len(semifinal_results) + (1 if final_result else 0)
+    if _n_fights:
+        log_league_event(sim_day, season_num, _n_fights, title_slots=(1 if final_result else 0))
 
     # Reset for next season -- points wipe for everyone; prior champion re-enters
     # the regular season on equal footing (no special seeding/bye).
@@ -301,16 +307,14 @@ def run_league_season(
     all_fighters: list[Fighter] | None = None,
 ) -> None:
     """
-    Call once per main sim-loop iteration. Gated on LEAGUE_FIGHT_INTERVAL --
-    a no-op most calls. When it fires, picks one weight class at random and
-    runs one regular-season fixture between two random League tier4 fighters
-    in that division; if that fixture brings the weight class's season fight
-    count to LEAGUE_SEASON_LENGTH, immediately runs the playoff bracket and
-    starts a new season.
+    Call when sim.py's events.league_event_due() says a League fixture is
+    due (Phase 2 -- the cadence gate lives there now, not in this function).
+    Picks one weight class at random and runs one regular-season fixture
+    between two random League tier4 fighters in that division; if that
+    fixture brings the weight class's season fight count to
+    LEAGUE_SEASON_LENGTH, immediately runs the playoff bracket and starts a
+    new season.
     """
-    if fight_num % LEAGUE_FIGHT_INTERVAL != 0:
-        return
-
     wc = random.choice(WEIGHT_CLASSES)
     pool = _league_pool(pools, wc)
     if len(pool) < 2:
