@@ -176,7 +176,17 @@ def _build_events_by_org(hype_by_name: dict[str, float]) -> dict[str, list[dict]
     to which matchup a real card would headline. hype_by_name misses
     fighters who've since retired/been cut (treated as 0, sinking them
     toward the prelims) -- an acceptable approximation for card ordering,
-    not used anywhere mechanics-relevant."""
+    not used anywhere mechanics-relevant.
+
+    Each event also gets "is_major" (does this card carry a title fight) and
+    "major_number" (this org's Nth title-bearing card, or None if not major)
+    -- a real-numbering-scheme concept, kept generic here even though only
+    the frontend's Apex FC display currently uses it (numbered flagship
+    cards vs. named Fight Nights, like real MMA numbered-event/Fight-Night
+    conventions) -- other orgs just ignore these fields and keep using
+    "number". major_number is computed in chronological order (event
+    history is already append-ordered) so it counts only major cards, not
+    every card in between, matching how real numbered-event sequences work."""
     bouts_by_key: dict[tuple[str, int], list[dict]] = {}
     for b in get_bout_history():
         bouts_by_key.setdefault((b.org, b.event_number), []).append(_serialize_bout(b))
@@ -186,6 +196,7 @@ def _build_events_by_org(hype_by_name: dict[str, float]) -> dict[str, list[dict]
         return (bout["is_title"], h)
 
     events_by_org: dict[str, list[dict]] = {}
+    major_counters: dict[str, int] = {}
     for e in get_event_history():
         if e.org == THE_LEAGUE_NAME:
             continue
@@ -193,10 +204,17 @@ def _build_events_by_org(hype_by_name: dict[str, float]) -> dict[str, list[dict]
         if not bouts:
             continue
         bouts = sorted(bouts, key=_prominence, reverse=True)
+        is_major = any(b["is_title"] for b in bouts)
+        major_number = None
+        if is_major:
+            major_counters[e.org] = major_counters.get(e.org, 0) + 1
+            major_number = major_counters[e.org]
         events_by_org.setdefault(e.org, []).append({
             "org": e.org,
             "tier_key": e.tier_key,
             "number": e.number,
+            "is_major": is_major,
+            "major_number": major_number,
             "scheduled_day": e.scheduled_day,
             "bouts": bouts,
         })

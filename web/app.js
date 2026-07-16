@@ -71,6 +71,21 @@ function labelsText(labels) {
 
 // ── Events / fight cards ─────────────────────────────────────────────────────
 
+// Apex FC only, per user's explicit choice -- other orgs keep flat sequential
+// "Org N" numbering. Real MMA convention: numbered flagship events (title
+// fights, "Apex FC 47") vs. named Fight Nights for everything else. event.is_major
+// / event.major_number come from api.py's _build_events_by_org.
+const APEX_FC_NAME = "Apex FC";
+
+function eventTitle(orgName, event) {
+  if (orgName === APEX_FC_NAME && !event.is_major) {
+    const main = event.bouts[0];
+    return `${orgName} Fight Night: ${main.fighter_a_name} vs. ${main.fighter_b_name}`;
+  }
+  const number = (orgName === APEX_FC_NAME && event.is_major) ? event.major_number : event.number;
+  return `${orgName} ${number}`;
+}
+
 function eventHref(org, number) { return "#event/" + encodeURIComponent(org) + "/" + number; }
 
 function fighterIdByName(name) {
@@ -111,7 +126,7 @@ function eventTeaserHtml(orgName) {
     ? `<div class="et-bout">${fighterLink(fighterIdByName(main.winner_name), main.winner_name)} def. ${escapeHtml(main.loser_name)} <span class="muted">— ${methodText(main)}</span></div>`
     : "";
   return `<div class="event-teaser">
-    <div class="et-label">Most recent &middot; Event #${e.number}</div>
+    <div class="et-label">Most recent &middot; ${escapeHtml(eventTitle(orgName, e))}</div>
     ${mainLine}
     <div class="et-more"><a href="${eventHref(orgName, e.number)}">Full card (${e.bouts.length} bouts) &rarr;</a></div>
   </div>`;
@@ -553,7 +568,7 @@ function renderRecentEventsList(orgName) {
   const items = events.map(e => {
     const main = e.bouts[0];
     const mainTxt = main ? `${escapeHtml(main.winner_name)} def. ${escapeHtml(main.loser_name)}` : "";
-    return `<li><a href="${eventHref(orgName, e.number)}">${escapeHtml(orgName)} ${e.number}</a> — ${mainTxt} <span class="muted">(day ${e.scheduled_day})</span></li>`;
+    return `<li><a href="${eventHref(orgName, e.number)}">${escapeHtml(eventTitle(orgName, e))}</a> — ${mainTxt} <span class="muted">(day ${e.scheduled_day})</span></li>`;
   }).join("\n");
   return `<h2>Recent Events</h2><ul>${items}</ul>`;
 }
@@ -634,7 +649,7 @@ function renderEventModal(orgName, number) {
   return `<div class="ec-back"><a href="${orgHref(orgName)}">&larr; ${escapeHtml(orgName)}</a></div>
     <div class="ec-hero">
       <div class="ec-tag">${humanize(main.weight_class)}${main.is_title ? " Championship" : ""}</div>
-      <div class="ec-num">${escapeHtml(orgName)} ${event.number}</div>
+      <div class="ec-num">${escapeHtml(eventTitle(orgName, event))}</div>
       <div class="ec-sub">Sim day ${event.scheduled_day} &middot; ${event.bouts.length}-bout card</div>
       <div class="ec-matchup">
         <div class="ec-fighter${aIsWinner && main.is_title ? " ec-champ" : ""}">
@@ -658,7 +673,7 @@ function renderEventModal(orgName, number) {
       <h2>Full card</h2>
       <div class="ec-list">${rows}</div>
     </div>
-    <div class="ec-footer">${escapeHtml(orgName)} ${event.number} &middot; UFC Career Sim</div>`;
+    <div class="ec-footer">${escapeHtml(eventTitle(orgName, event))} &middot; UFC Career Sim</div>`;
 }
 
 // ── Modal plumbing (hash-routed, so :visited coloring works natively) ───────
