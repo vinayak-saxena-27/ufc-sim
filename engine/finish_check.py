@@ -22,6 +22,7 @@ What this module does NOT do (Part 2 / Part 3):
 """
 from __future__ import annotations
 
+import random
 from dataclasses import dataclass
 
 from engine.phase_output import SegmentOutput
@@ -49,8 +50,43 @@ from engine.phase_output import SegmentOutput
 # causing near-100% win rates. 30.0 sets the floor well above the observed R1
 # max (~15.4), so subs require either extreme skill gaps or multi-round
 # accumulation in later rounds. KO_TKO_THRESHOLD left at 10.0 this pass.
-KO_TKO_THRESHOLD:    float = 10.0
-SUBMISSION_THRESHOLD: float = 23.0
+# Retuned 2026-07-15 (calibration session): the original 10.0/23.0 values
+# produced a ~5-7% overall finish rate against real-world's 44.5-52.6% target
+# (confirmed via isolated same-tier fight sampling -- even elite-vs-elite
+# matchups almost never crossed either threshold). Independent of SCALE=43.0/
+# win_probability() -- these thresholds govern HOW a fight ends, never WHO
+# wins, so smoke_test.py's win-rate calibration anchor is unaffected by this
+# change (re-verified after retuning). See CALIBRATION_LOG.md for the sweep
+# methodology and history.
+KO_TKO_THRESHOLD:    float = 2.8
+SUBMISSION_THRESHOLD: float = 10.0
+
+# Weight-class KO/TKO power scaling (calibration session, 2026-07-15).
+# Real-world finish rate scales strongly with weight (bigger = more knockout
+# power) while submission rate stays roughly flat across divisions -- so this
+# multiplier ONLY scales striking pressure before the KO_TKO_THRESHOLD check,
+# never submission pressure. Keyed by Fighter.weight_class; unknown/missing
+# keys (e.g. smoke_test.py's flat test populations) fall back to 1.0, an exact
+# no-op that preserves the existing SCALE=43.0 calibration anchor.
+# Real-world lightweight/welterweight KO rates are nearly identical (29%/30%)
+# with heavyweight far higher (45-48%) -- the multiplier spread mirrors that
+# shape rather than a uniform per-step gradient. First-pass estimates -- see
+# CALIBRATION_LOG.md for tuning history.
+WEIGHT_CLASS_STRIKE_MULTIPLIER: dict[str, float] = {
+    "heavyweight":  2.30,
+    "welterweight": 1.00,
+    "lightweight":  0.95,
+}
+
+# Real-world submission-method breakdown (chokes ~79%, joint locks ~15%,
+# leg locks ~3%, other ~3%). Cosmetic reporting tag only -- rolled once when a
+# submission FinishEvent fires, no mechanical effect on the fight itself.
+SUBMISSION_TYPE_WEIGHTS: dict[str, float] = {
+    "choke":      0.79,
+    "joint_lock": 0.15,
+    "leg_lock":   0.03,
+    "other":      0.03,
+}
 
 
 # ─── Result type ──────────────────────────────────────────────────────────────
@@ -64,6 +100,16 @@ class FinishEvent:
     segment_index: int        # 0-indexed position within the round's segment list
     winner_id:     str | None = None   # stable fighter_id; None for legacy/test callers
     loser_id:      str | None = None
+    submission_type: str | None = None  # set only when method == "submission"
+
+
+def _roll_submission_type() -> str:
+    """Draw a cosmetic submission-method tag from SUBMISSION_TYPE_WEIGHTS."""
+    return random.choices(
+        list(SUBMISSION_TYPE_WEIGHTS.keys()),
+        weights=list(SUBMISSION_TYPE_WEIGHTS.values()),
+        k=1,
+    )[0]
 
 
 # ─── Core check ───────────────────────────────────────────────────────────────
@@ -77,6 +123,7 @@ def check_finish(
     fb_id:       str | None = None,
     prior_sub_a: float = 0.0,
     prior_sub_b: float = 0.0,
+    strike_multiplier: float = 1.0,
 ) -> FinishEvent | None:
     """
     Check whether accumulated finish-pressure has crossed a stoppage threshold.
@@ -87,6 +134,11 @@ def check_finish(
     prior_sub_a / prior_sub_b: carry-over sub pressure from previous rounds
     (already decayed by SUB_PRESSURE_ROUND_DECAY in fight_engine). Striking
     pressure does not carry across rounds (corner stoppage resets that clock).
+
+    strike_multiplier: weight-class KO/TKO power scaling (WEIGHT_CLASS_STRIKE_
+    MULTIPLIER above), applied only to striking pressure -- submission pressure
+    is deliberately untouched so sub rate stays weight-class-flat. Default 1.0
+    is an exact no-op for any caller that doesn't pass a real weight class.
 
     Priority: striking KO/TKO checked before submission. Simultaneous crossings
     resolved in fa's favor -- placeholder tiebreak.
@@ -99,8 +151,8 @@ def check_finish(
 
     idx = len(segments) - 1
 
-    wsp_a  = sum(s.strike_pressure_a * s.recency_weight for s in segments)
-    wsp_b  = sum(s.strike_pressure_b * s.recency_weight for s in segments)
+    wsp_a  = strike_multiplier * sum(s.strike_pressure_a * s.recency_weight for s in segments)
+    wsp_b  = strike_multiplier * sum(s.strike_pressure_b * s.recency_weight for s in segments)
     wsub_a = prior_sub_a + sum(s.sub_pressure_a * s.recency_weight for s in segments)
     wsub_b = prior_sub_b + sum(s.sub_pressure_b * s.recency_weight for s in segments)
 
@@ -110,8 +162,8 @@ def check_finish(
         # within the last segment: t = (threshold - pressure_before_segment) / segment_delta.
         # Smaller t = earlier crossing = that fighter's striking wins.
         last    = segments[-1]
-        delta_a = last.strike_pressure_a * last.recency_weight
-        delta_b = last.strike_pressure_b * last.recency_weight
+        delta_a = strike_multiplier * last.strike_pressure_a * last.recency_weight
+        delta_b = strike_multiplier * last.strike_pressure_b * last.recency_weight
         t_a = (KO_TKO_THRESHOLD - (wsp_a - delta_a)) / delta_a if delta_a > 0 else 0.0
         t_b = (KO_TKO_THRESHOLD - (wsp_b - delta_b)) / delta_b if delta_b > 0 else 0.0
         if t_a <= t_b:
@@ -131,13 +183,13 @@ def check_finish(
         t_a = (SUBMISSION_THRESHOLD - (wsub_a - delta_sub_a)) / delta_sub_a if delta_sub_a > 0 else 0.0
         t_b = (SUBMISSION_THRESHOLD - (wsub_b - delta_sub_b)) / delta_sub_b if delta_sub_b > 0 else 0.0
         if t_a <= t_b:
-            return FinishEvent(fa_name, fb_name, "submission", idx, fa_id, fb_id)
+            return FinishEvent(fa_name, fb_name, "submission", idx, fa_id, fb_id, _roll_submission_type())
         else:
-            return FinishEvent(fb_name, fa_name, "submission", idx, fb_id, fa_id)
+            return FinishEvent(fb_name, fa_name, "submission", idx, fb_id, fa_id, _roll_submission_type())
     if wsub_a >= SUBMISSION_THRESHOLD:
-        return FinishEvent(fa_name, fb_name, "submission", idx, fa_id, fb_id)
+        return FinishEvent(fa_name, fb_name, "submission", idx, fa_id, fb_id, _roll_submission_type())
     if wsub_b >= SUBMISSION_THRESHOLD:
-        return FinishEvent(fb_name, fa_name, "submission", idx, fb_id, fa_id)
+        return FinishEvent(fb_name, fa_name, "submission", idx, fb_id, fa_id, _roll_submission_type())
 
     return None
 

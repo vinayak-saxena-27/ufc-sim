@@ -133,6 +133,9 @@ def simulate_fight(
         time_ground      = time_ground,
         adversity_comeback = adversity_comeback,
         weight_class     = winner.weight_class,
+        round_finished   = outcome.round_finished,
+        decision_type    = outcome.decision_type,
+        submission_type  = outcome.submission_type,
     ))
     loser.fight_history.append(FightResult(
         opponent_name    = winner.name,
@@ -148,6 +151,9 @@ def simulate_fight(
         time_clinch      = time_clinch,
         time_ground      = time_ground,
         weight_class     = loser.weight_class,
+        round_finished   = outcome.round_finished,
+        decision_type    = outcome.decision_type,
+        submission_type  = outcome.submission_type,
     ))
     # Cached "last real fight" anchor for idle-weighted matchmaking selection
     # (sim.py) -- avoids an O(history) scan per fighter per draw. sim_day=-1

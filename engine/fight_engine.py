@@ -23,7 +23,9 @@ from career.fighter import Fighter
 from engine.phase_engine import Phase, simulate_round, TICKS_PER_ROUND, TICK_SECONDS
 from career.tiers import TIER_RULESET
 from engine.phase_output import compute_round_output
-from engine.finish_check import FinishEvent, check_finish, pressure_snapshot
+from engine.finish_check import (
+    FinishEvent, check_finish, pressure_snapshot, WEIGHT_CLASS_STRIKE_MULTIPLIER,
+)
 from engine.fatigue import FatigueState, fresh_fatigue, apply_fatigue_to_fighter, update_fatigue
 
 
@@ -77,6 +79,12 @@ class FightOutcome:
     total_score_a:  float           # cumulative score across all completed/partial rounds
     total_score_b:  float
     rounds:         list[RoundResult]
+    # Judges' decision sub-type ("unanimous" | "split" | "majority"); only set
+    # when method == "decision". See engine/judges.py.
+    decision_type:  str | None = None
+    # Submission category tag ("choke" | "joint_lock" | "leg_lock" | "other");
+    # only set when method == "submission". See engine/finish_check.py.
+    submission_type: str | None = None
 
 
 # ─── Round runner ─────────────────────────────────────────────────────────────
@@ -91,6 +99,7 @@ def _run_round(
     prior_sub_a: float = 0.0,
     prior_sub_b: float = 0.0,
     ticks_per_round: int = TICKS_PER_ROUND,
+    strike_multiplier: float = 1.0,
 ) -> tuple[RoundResult, FinishEvent | None, float, float]:
     """
     Run one round through the full 4a -> 4b -> finish-check pipeline.
@@ -129,7 +138,8 @@ def _run_round(
         accumulated.append(seg)
         finish = check_finish(accumulated, fa.name, fb.name,
                               fa_id=fa.fighter_id, fb_id=fb.fighter_id,
-                              prior_sub_a=prior_sub_a, prior_sub_b=prior_sub_b)
+                              prior_sub_a=prior_sub_a, prior_sub_b=prior_sub_b,
+                              strike_multiplier=strike_multiplier)
         if finish:
             break
 
@@ -238,12 +248,18 @@ def simulate_full_fight(
     carry_sub_a = 0.0
     carry_sub_b = 0.0
 
+    # Weight-class KO/TKO power scaling (calibration session): matchmaking already
+    # guarantees fa/fb share a weight class, so one lookup covers both fighters.
+    # Unknown/missing weight_class falls back to 1.0 -- an exact no-op.
+    strike_multiplier = WEIGHT_CLASS_STRIKE_MULTIPLIER.get(fa.weight_class, 1.0)
+
     for rnd in range(1, n_rounds + 1):
         result, finish, end_wsub_a, end_wsub_b = _run_round(
             fa, fb, fat_a, fat_b, rnd,
             prior_sub_a=carry_sub_a,
             prior_sub_b=carry_sub_b,
             ticks_per_round=ticks_per_round,
+            strike_multiplier=strike_multiplier,
         )
         results.append(result)
 
@@ -258,6 +274,7 @@ def simulate_full_fight(
                 total_score_a  = sum(r.score_a for r in results),
                 total_score_b  = sum(r.score_b for r in results),
                 rounds         = results,
+                submission_type = finish.submission_type,
             )
 
         # Update fatigue and sub carry-over for the next round.
@@ -292,6 +309,9 @@ def simulate_full_fight(
         # Exact tie (astronomically rare); coin flip.
         winner, loser = (fa, fb) if random.random() < 0.5 else (fb, fa)
 
+    from engine.judges import score_decision
+    decision_type = score_decision(results, a_is_winner=(winner is fa))
+
     return FightOutcome(
         winner_name    = winner.name,
         loser_name     = loser.name,
@@ -302,6 +322,7 @@ def simulate_full_fight(
         total_score_a  = total_a,
         total_score_b  = total_b,
         rounds         = results,
+        decision_type  = decision_type,
     )
 
 
