@@ -66,6 +66,7 @@ from career.rankings import get_rankings, is_eligible_vs_ranked, RankingEntry, R
 from career.org_rankings import get_org_rankings
 from career.nonelite_rankings import get_midmajor_org_rankings
 from orgs.org_registry import THE_LEAGUE_NAME, MIDMAJOR_ORG_NAMES, decision_mode_for_org
+from orgs.events import log_bout
 from career.hype import (
     update_hype_after_fight, apply_title_hype,
     title_win_bonus, title_defense_bonus, title_loss_penalty,
@@ -476,6 +477,7 @@ def maybe_run_title_fight(
     fight_num:    int = 0,
     all_fighters: list[Fighter] | None = None,
     top_tier_org: str = "",
+    event_number: int = 0,
 ) -> bool:
     """
     Register one regular fight's worth of activity for this (weight_class, tier_key
@@ -639,4 +641,12 @@ def maybe_run_title_fight(
         sim_day          = get_sim_day(),
         org              = reg_org,
     ))
+    if reg_org and event_number:
+        log_bout(
+            org=reg_org, event_number=event_number, weight_class=weight_class,
+            is_title=True, fighter_a_name=fa.name, fighter_b_name=fb.name,
+            winner_name=winner.name, method=winner.fight_history[-1].method,
+            rounds_completed=winner.fight_history[-1].rounds_completed,
+            sim_day=get_sim_day(),
+        )
     return True

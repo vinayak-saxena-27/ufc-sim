@@ -69,6 +69,77 @@ function labelsText(labels) {
   return labels && labels.length ? `(${labels.join(", ")})` : "—";
 }
 
+// ── Events / fight cards ─────────────────────────────────────────────────────
+
+function eventHref(org, number) { return "#event/" + encodeURIComponent(org) + "/" + number; }
+
+function fighterIdByName(name) {
+  const f = fightersByName.get(name);
+  return f ? f.fighter_id : null;
+}
+
+function recentEventsForOrg(orgName) {
+  return (SNAPSHOT.events && SNAPSHOT.events[orgName]) || [];
+}
+
+function isLeagueOrg(org) { return org.format === "tournament"; }
+
+function billingLabel(idx) {
+  if (idx === 0) return "Main event";
+  if (idx === 1) return "Co-main";
+  if (idx === 2) return "Featured";
+  return "Prelim";
+}
+
+function methodText(b) {
+  return b.method === "decision"
+    ? `Decision · ${b.rounds_completed} Rds`
+    : `${humanize(b.method)} · Rd ${b.rounds_completed}`;
+}
+
+function initials(name) {
+  return (name || "").split(/\s+/).filter(Boolean).map(w => w[0]).join("").slice(0, 2).toUpperCase();
+}
+
+// Recent-event teaser strip used by both top-tier and mid-major org cards.
+function eventTeaserHtml(orgName) {
+  const events = recentEventsForOrg(orgName);
+  if (!events.length) return `<p class="empty-note">No numbered events on record yet.</p>`;
+  const e = events[0];
+  const main = e.bouts[0];
+  const mainLine = main
+    ? `<div class="et-bout">${fighterLink(fighterIdByName(main.winner_name), main.winner_name)} def. ${escapeHtml(main.loser_name)} <span class="muted">— ${methodText(main)}</span></div>`
+    : "";
+  return `<div class="event-teaser">
+    <div class="et-label">Most recent &middot; Event #${e.number}</div>
+    ${mainLine}
+    <div class="et-more"><a href="${eventHref(orgName, e.number)}">Full card (${e.bouts.length} bouts) &rarr;</a></div>
+  </div>`;
+}
+
+// The League runs season/playoffs, not numbered event cards -- teaser shows
+// the most recently completed season per weight class instead.
+function mostRecentLeagueSeasons() {
+  const byWc = new Map();
+  for (const s of (SNAPSHOT.league_seasons || [])) {
+    const cur = byWc.get(s.weight_class);
+    if (!cur || cur.season_number < s.season_number) byWc.set(s.weight_class, s);
+  }
+  return byWc;
+}
+
+function leagueTeaserHtml() {
+  const byWc = mostRecentLeagueSeasons();
+  if (!byWc.size) return `<p class="empty-note">No completed seasons yet.</p>`;
+  return weightClasses().filter(wc => byWc.has(wc)).map(wc => {
+    const s = byWc.get(wc);
+    const line = s.champion_name
+      ? `<span class="ls-champ">${escapeHtml(s.champion_name)}</span> crowned Season ${s.season_number} champion`
+      : `Season ${s.season_number} ended without a crowned champion`;
+    return `<div class="event-teaser"><div class="et-label">${humanize(wc)} &middot; Most recent season</div><div class="et-bout">${line}</div></div>`;
+  }).join("\n");
+}
+
 function attrBarHtml(key, value) {
   const scale = 70;
   const v = Math.max(-scale, Math.min(scale, value));
@@ -154,7 +225,6 @@ function render() {
   document.getElementById("day-display").textContent =
     `${formatSimDay(SNAPSHOT.current_day)} · ${SNAPSHOT.fighters.length} fighters`;
   const parts = [
-    renderTitlesSection(),
     renderOrganizationsSection(),
     renderAcademiesSection(),
     renderFightersSection(),
@@ -163,91 +233,73 @@ function render() {
   renderFightersTable();
 }
 
-function renderTitlesSection() {
-  // Top-tier (tier4) belts only -- Apex FC / The League / Eastern Grand Prix.
-  // The backend registry also tracks regional/mid-major/"Top-org btm-15"
-  // belts for internal mechanics (scout-notice signals, retention logic),
-  // but those aren't a recognizable championship concept worth surfacing --
-  // the old version listed all ~24 slots per division, including a
-  // "Top-org btm-15" belt tier that isn't a real distinction.
-  const byWc = new Map();
-  for (const key of Object.keys(SNAPSHOT.titles)) {
-    const t = SNAPSHOT.titles[key];
-    if (t.tier !== "tier4") continue;
-    if (!byWc.has(t.weight_class)) byWc.set(t.weight_class, []);
-    byWc.get(t.weight_class).push(t);
-  }
-
-  const sections = weightClasses().map(wc => {
-    const list = (byWc.get(wc) || []).filter(t => t.champion_id);
-    if (!list.length) {
-      return `<h3>${humanize(wc)}</h3><p class="empty-note">No top-tier titles awarded yet in this division.</p>`;
-    }
-    list.sort((a, b) => (a.org || "").localeCompare(b.org || ""));
-    const rows = list.map(t => `<tr>
-        <td>${t.org ? orgLink(t.org) : "—"}</td>
-        <td>${fighterLink(t.champion_id, t.champion_name)}</td>
-      </tr>`).join("\n");
-    return `<h3>${humanize(wc)}</h3>
-      <table class="wikitable">
-        <thead><tr><th>Organization</th><th>Champion</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>`;
-  }).join("\n");
-
-  return `<section id="titles" class="section-block">
-    <h2>Titles</h2>
-    <p>Current world champions of the three top-tier organizations.</p>
-    ${sections}
-  </section>`;
-}
-
 function renderOrganizationsSection() {
   const orgs = Object.values(SNAPSHOT.organizations);
 
-  // Top-tier orgs ("the leagues") get full treatment inline: champion + full
-  // ranked roster per weight class, in place of the old standalone combined
-  // "Elite Rankings" page (which mixed all 3 orgs' fighters together and only
-  // ever mattered as a backend matchmaking signal, not a real in-world ranking).
+  // Information density scales down with real-world prominence: top-tier
+  // orgs get a rich card (recent-event teaser + champion + full ranked
+  // roster per weight class), mid-major gets a lighter card (teaser only,
+  // full roster is one click away via the org page), regional stays a
+  // plain compact directory.
   const topTier = orgs.filter(o => o.tier_group === "Top-tier").sort((a, b) => b.prestige - a.prestige);
-  const topTierSections = topTier.map(org => {
+  const topTierCards = topTier.map(org => {
+    const teaser = isLeagueOrg(org) ? leagueTeaserHtml() : eventTeaserHtml(org.name);
     const wcBlocks = weightClasses().map(wc => {
       const t = titleEntry(wc, "tier4", org.name);
       const champLine = t && t.champion_id
         ? `<p><strong>Champion:</strong> ${fighterLink(t.champion_id, t.champion_name)}</p>`
         : `<p class="empty-note">Title vacant</p>`;
-      return `<h4>${humanize(wc)}</h4>${champLine}${orgRosterTableHtml(org.name, wc)}`;
+      return `<h4>${humanize(wc)}</h4>${champLine}
+        <details class="roster-dropdown">
+          <summary>Top 15 ranked</summary>
+          ${orgRosterTableHtml(org.name, wc)}
+        </details>`;
     }).join("\n");
-    return `<h3>${orgLink(org.name)}</h3>
-      <p class="muted">${humanize(org.format)} · ${humanize(org.scoring)} · Prestige ${org.prestige.toFixed(1)}</p>
-      ${wcBlocks}`;
+    return `<div class="org-card org-card--top">
+      <div class="org-card-head">
+        <h3>${orgLink(org.name)}</h3>
+        <span class="org-card-meta">${humanize(org.format)} &middot; ${humanize(org.scoring)} &middot; Prestige ${org.prestige.toFixed(1)}</span>
+      </div>
+      <div class="org-card-body">
+        ${teaser}
+        ${wcBlocks}
+      </div>
+    </div>`;
   }).join("\n");
 
-  // Mid-major/Regional stay a simple directory table -- no per-org ranked
-  // roster is exposed for those tiers today (only tier4 has one), and they
-  // weren't part of the Elite-Rankings-vs-Organizations confusion this
-  // restructure is fixing.
-  const otherGroups = ["Mid-major", "Regional"];
-  const otherSections = otherGroups.map(group => {
-    const list = orgs.filter(o => o.tier_group === group).sort((a, b) => b.prestige - a.prestige);
-    const rows = list.map(o => `<tr>
-        <td>${orgLink(o.name)}</td>
-        <td>${humanize(o.format)}</td>
-        <td>${humanize(o.scoring)}</td>
-        <td class="num">${o.prestige.toFixed(1)}</td>
-      </tr>`).join("\n");
-    return `<h3>${group}</h3>
-      <table class="wikitable">
-        <thead><tr><th>Organization</th><th>Format</th><th>Scoring</th><th class="num">Prestige</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>`;
-  }).join("\n");
+  const midTier = orgs.filter(o => o.tier_group === "Mid-major").sort((a, b) => b.prestige - a.prestige);
+  const midTierCards = midTier.map(org => `<div class="org-card org-card--mid">
+      <div class="org-card-head">
+        <h3>${orgLink(org.name)}</h3>
+        <span class="org-card-meta">Prestige ${org.prestige.toFixed(1)}</span>
+      </div>
+      <div class="org-card-body">
+        ${eventTeaserHtml(org.name)}
+      </div>
+    </div>`).join("\n");
+
+  const regional = orgs.filter(o => o.tier_group === "Regional").sort((a, b) => b.prestige - a.prestige);
+  const regionalRows = regional.map(o => `<tr>
+      <td>${orgLink(o.name)}</td>
+      <td>${humanize(o.format)}</td>
+      <td>${humanize(o.scoring)}</td>
+      <td class="num">${o.prestige.toFixed(1)}</td>
+    </tr>`).join("\n");
 
   return `<section id="organizations" class="section-block">
     <h2>Organizations</h2>
-    <p>Top-tier orgs shown with their current champion and full ranked roster per weight class. Mid-major and regional orgs are listed as a directory below — click a name for its roster and feeder pipeline.</p>
-    ${topTierSections}
-    ${otherSections}
+    <p>Top-tier orgs shown with a recent-event teaser, current champion, and full ranked roster per weight class. Mid-major orgs get a lighter card with just their most recent card. Regional orgs are a plain directory below — click a name for its roster and feeder pipeline.</p>
+    <h3>Top-tier</h3>
+    ${topTierCards}
+    <h3>Mid-major</h3>
+    <div class="org-cards-grid">${midTierCards}</div>
+    <h3>Regional</h3>
+    <div class="regional-directory">
+      <table class="wikitable">
+        <thead><tr><th>Organization</th><th>Format</th><th>Scoring</th><th class="num">Prestige</th></tr></thead>
+        <tbody>${regionalRows}</tbody>
+      </table>
+    </div>
   </section>`;
 }
 
@@ -495,6 +547,29 @@ function titleEntry(wc, tier, org) {
   return SNAPSHOT.titles[`${wc}|${tier}|${org || "-"}`];
 }
 
+function renderRecentEventsList(orgName) {
+  const events = recentEventsForOrg(orgName);
+  if (!events.length) return "";
+  const items = events.map(e => {
+    const main = e.bouts[0];
+    const mainTxt = main ? `${escapeHtml(main.winner_name)} def. ${escapeHtml(main.loser_name)}` : "";
+    return `<li><a href="${eventHref(orgName, e.number)}">${escapeHtml(orgName)} ${e.number}</a> — ${mainTxt} <span class="muted">(day ${e.scheduled_day})</span></li>`;
+  }).join("\n");
+  return `<h2>Recent Events</h2><ul>${items}</ul>`;
+}
+
+function renderLeagueSeasonsBlock() {
+  const seasons = SNAPSHOT.league_seasons || [];
+  if (!seasons.length) return "";
+  const items = seasons.slice(0, 12).map(s => {
+    const champ = s.champion_name
+      ? `<span class="ls-champ">${escapeHtml(s.champion_name)}</span>`
+      : "No champion crowned";
+    return `<div class="league-season"><div class="ls-title">${humanize(s.weight_class)} &middot; Season ${s.season_number}</div>${champ}</div>`;
+  }).join("\n");
+  return `<h2>Recent Seasons</h2>${items}`;
+}
+
 function renderOrgModal(org) {
   const feedsTo = org.primary_feeds_to
     ? `${orgLink(org.primary_feeds_to)}${org.secondary_feeds_to ? ` / ${orgLink(org.secondary_feeds_to)}` : ""}`
@@ -506,6 +581,8 @@ function renderOrgModal(org) {
   const rosterSections = weightClasses().map(wc =>
     `<h3>${humanize(wc)}</h3>${orgRosterTableHtml(org.name, wc)}`
   ).join("\n");
+
+  const historyBlock = isLeagueOrg(org) ? renderLeagueSeasonsBlock() : renderRecentEventsList(org.name);
 
   return `<h1>${escapeHtml(org.name)}</h1>
     <table class="infobox">
@@ -520,8 +597,68 @@ function renderOrgModal(org) {
       </tbody>
     </table>
 
+    ${historyBlock}
+
     <h2>Roster</h2>
     ${rosterSections}`;
+}
+
+// ── Event / fight-card modal (broadcast treatment) ──────────────────────────
+
+function eventBoutRowHtml(b, idx) {
+  const winnerLink = fighterLink(fighterIdByName(b.winner_name), b.winner_name);
+  const billingCls = idx === 0 ? "ec-billing ec-main" : "ec-billing";
+  const titleTag = b.is_title ? ` <span class="muted">(Title fight)</span>` : "";
+  return `<div class="ec-row">
+    <div class="${billingCls}">${billingLabel(idx)}</div>
+    <div class="ec-matchup-txt"><span class="ec-winner">${winnerLink}</span> def. ${escapeHtml(b.loser_name)}${titleTag} <span class="ec-wc">&middot; ${humanize(b.weight_class)}</span></div>
+    <div class="ec-method-txt">${methodText(b)}</div>
+  </div>`;
+}
+
+function renderEventModal(orgName, number) {
+  const events = recentEventsForOrg(orgName);
+  const event = events.find(e => e.number === number);
+  if (!event || !event.bouts.length) {
+    return `<div class="ec-back"><a href="${orgHref(orgName)}">&larr; ${escapeHtml(orgName)}</a></div>
+      <p class="empty-note" style="padding:1.4em;">Event not found — it may have aged out of the recent-events window.</p>`;
+  }
+
+  const main = event.bouts[0];
+  const aIsWinner = main.winner_name === main.fighter_a_name;
+  const aId = fighterIdByName(main.fighter_a_name);
+  const bId = fighterIdByName(main.fighter_b_name);
+
+  const rows = event.bouts.map((b, i) => eventBoutRowHtml(b, i)).join("\n");
+
+  return `<div class="ec-back"><a href="${orgHref(orgName)}">&larr; ${escapeHtml(orgName)}</a></div>
+    <div class="ec-hero">
+      <div class="ec-tag">${humanize(main.weight_class)}${main.is_title ? " Championship" : ""}</div>
+      <div class="ec-num">${escapeHtml(orgName)} ${event.number}</div>
+      <div class="ec-sub">Sim day ${event.scheduled_day} &middot; ${event.bouts.length}-bout card</div>
+      <div class="ec-matchup">
+        <div class="ec-fighter${aIsWinner && main.is_title ? " ec-champ" : ""}">
+          ${main.is_title ? `<div class="ec-belt">${aIsWinner ? "Champion" : "Challenger"}</div>` : ""}
+          <div class="ec-silhouette">${initials(main.fighter_a_name)}</div>
+          <div class="ec-name">${fighterLink(aId, main.fighter_a_name)}</div>
+        </div>
+        <div class="ec-vs">VS</div>
+        <div class="ec-fighter${!aIsWinner && main.is_title ? " ec-champ" : ""}">
+          ${main.is_title ? `<div class="ec-belt">${!aIsWinner ? "Champion" : "Challenger"}</div>` : ""}
+          <div class="ec-silhouette">${initials(main.fighter_b_name)}</div>
+          <div class="ec-name">${fighterLink(bId, main.fighter_b_name)}</div>
+        </div>
+      </div>
+      <div class="ec-result-strip">
+        <span class="ec-win-tag">${escapeHtml(main.winner_name)} wins</span><span class="ec-dot">&middot;</span>
+        <span class="ec-method">${methodText(main)}</span>
+      </div>
+    </div>
+    <div class="ec-section">
+      <h2>Full card</h2>
+      <div class="ec-list">${rows}</div>
+    </div>
+    <div class="ec-footer">${escapeHtml(orgName)} ${event.number} &middot; UFC Career Sim</div>`;
 }
 
 // ── Modal plumbing (hash-routed, so :visited coloring works natively) ───────
@@ -536,14 +673,17 @@ function renderOrgModal(org) {
 let modalStack = [];
 let currentModalFighterId = null;
 
-function openModal(html) {
+function openModal(html, extraClass) {
   document.getElementById("modal-content").innerHTML = html;
   document.getElementById("modal-overlay").classList.remove("hidden");
-  document.getElementById("modal-box").scrollTop = 0;
+  const box = document.getElementById("modal-box");
+  box.className = extraClass || "";
+  box.scrollTop = 0;
 }
 
 function closeModal() {
   document.getElementById("modal-overlay").classList.add("hidden");
+  document.getElementById("modal-box").className = "";
   modalStack = [];
   currentModalFighterId = null;
 }
@@ -571,6 +711,14 @@ function checkModalFromHash() {
     const id = decodeURIComponent(h.slice("#fighter/".length));
     modalStack = [];
     openModal(fighterModalHtmlById(id));
+  } else if (h.startsWith("#event/")) {
+    modalStack = [];
+    currentModalFighterId = null;
+    const rest = decodeURIComponent(h.slice("#event/".length));
+    const cut = rest.lastIndexOf("/");
+    const orgName = rest.slice(0, cut);
+    const number = parseInt(rest.slice(cut + 1), 10);
+    openModal(renderEventModal(orgName, number), "event-modal");
   } else if (h.startsWith("#org/")) {
     modalStack = [];
     currentModalFighterId = null;

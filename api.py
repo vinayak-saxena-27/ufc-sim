@@ -27,9 +27,11 @@ from career.org_rankings import get_org_rankings
 from career.labels import get_champion_id
 from career.academy_reputation import ACADEMY_REPUTATION
 from orgs.org_registry import (
-    ORG_NAMES, MIDMAJOR_ORG_NAMES, REGIONAL_ORG_NAMES,
+    ORG_NAMES, MIDMAJOR_ORG_NAMES, REGIONAL_ORG_NAMES, THE_LEAGUE_NAME,
     ORGS, MIDMAJOR_ORGS, REGIONAL_ORGS, Org,
 )
+from orgs.events import get_event_history, get_bout_history, EventRecord, BoutRecord
+from orgs.league_season import get_league_history, LeagueSeasonRecord
 
 app = FastAPI(title="UFC Sim API")
 app.add_middleware(
@@ -137,6 +139,90 @@ def _serialize_org(org: Org) -> dict:
     }
 
 
+_EVENTS_PER_ORG_CAP = 10
+"""Most recent numbered events returned per org -- the full history can run
+into the hundreds over a long sim; a fight-card UI only ever wants recent
+ones, and this keeps /state's payload bounded."""
+
+_LEAGUE_SEASONS_CAP = 30
+
+
+def _serialize_bout(b: BoutRecord) -> dict:
+    loser_name = b.fighter_b_name if b.winner_name == b.fighter_a_name else b.fighter_a_name
+    return {
+        "weight_class": b.weight_class,
+        "is_title": b.is_title,
+        "fighter_a_name": b.fighter_a_name,
+        "fighter_b_name": b.fighter_b_name,
+        "winner_name": b.winner_name,
+        "loser_name": loser_name,
+        "method": b.method,
+        "rounds_completed": b.rounds_completed,
+        "sim_day": b.sim_day,
+    }
+
+
+def _build_events_by_org(hype_by_name: dict[str, float]) -> dict[str, list[dict]]:
+    """Numbered fight-card events, most recent first, grouped by org --
+    excludes The League (its own season/playoff history is exposed
+    separately, see _serialize_league_season) and any event with no logged
+    bouts (thin-pool empty cards, or events logged before bout-level
+    tracking existed).
+
+    Within an event, bouts are billed by drawing power (title bout first,
+    then combined current hype of the two participants), not by the order
+    they happened to resolve in -- BoutSlot construction order (title slots,
+    then density-injection slots, then idle-weighted fill) has no relation
+    to which matchup a real card would headline. hype_by_name misses
+    fighters who've since retired/been cut (treated as 0, sinking them
+    toward the prelims) -- an acceptable approximation for card ordering,
+    not used anywhere mechanics-relevant."""
+    bouts_by_key: dict[tuple[str, int], list[dict]] = {}
+    for b in get_bout_history():
+        bouts_by_key.setdefault((b.org, b.event_number), []).append(_serialize_bout(b))
+
+    def _prominence(bout: dict) -> tuple[bool, float]:
+        h = hype_by_name.get(bout["fighter_a_name"], 0.0) + hype_by_name.get(bout["fighter_b_name"], 0.0)
+        return (bout["is_title"], h)
+
+    events_by_org: dict[str, list[dict]] = {}
+    for e in get_event_history():
+        if e.org == THE_LEAGUE_NAME:
+            continue
+        bouts = bouts_by_key.get((e.org, e.number))
+        if not bouts:
+            continue
+        bouts = sorted(bouts, key=_prominence, reverse=True)
+        events_by_org.setdefault(e.org, []).append({
+            "org": e.org,
+            "tier_key": e.tier_key,
+            "number": e.number,
+            "scheduled_day": e.scheduled_day,
+            "bouts": bouts,
+        })
+
+    for org, events in events_by_org.items():
+        events.sort(key=lambda ev: ev["number"], reverse=True)
+        events_by_org[org] = events[:_EVENTS_PER_ORG_CAP]
+    return events_by_org
+
+
+def _serialize_league_season(r: LeagueSeasonRecord) -> dict:
+    return {
+        "weight_class": r.weight_class,
+        "season_number": r.season_number,
+        "top_scorers": [{"name": n, "points": p} for n, p in r.top_scorers],
+        "semifinal_results": [
+            {"winner_name": w, "loser_name": l, "method": m} for w, l, m in r.semifinal_results
+        ],
+        "final_result": (
+            {"winner_name": r.final_result[0], "loser_name": r.final_result[1], "method": r.final_result[2]}
+            if r.final_result else None
+        ),
+        "champion_name": r.champion_name,
+    }
+
+
 def _serialize_ranking_entry(e: RankingEntry) -> dict:
     return {
         "rank": e.rank,
@@ -188,6 +274,14 @@ def _build_snapshot() -> dict:
         for org in list(ORGS.values()) + list(MIDMAJOR_ORGS.values()) + list(REGIONAL_ORGS.values())
     }
 
+    hype_by_name = {f.name: f.hype for f in all_fighters}
+    events = _build_events_by_org(hype_by_name)
+
+    league_seasons = sorted(
+        (_serialize_league_season(r) for r in get_league_history()),
+        key=lambda s: s["season_number"], reverse=True,
+    )[:_LEAGUE_SEASONS_CAP]
+
     return {
         "current_day": state.current_day,
         # Display-cased identifiers, per the frontend contract; dict keys above
@@ -201,6 +295,8 @@ def _build_snapshot() -> dict:
         "titles": titles,
         "academy_reputations": dict(ACADEMY_REPUTATION),
         "organizations": organizations,
+        "events": events,
+        "league_seasons": league_seasons,
     }
 
 
