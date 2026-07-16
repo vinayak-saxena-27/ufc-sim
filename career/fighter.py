@@ -39,6 +39,16 @@ class FightResult:
     # history recorded before this field existed (whatever division the fighter
     # was in at the time -- see rankings.py's backward-compat handling).
     weight_class: str = ""
+    # Which round the fight ended in (finishes only); None for decisions and for
+    # pre-existing history recorded before this field existed.
+    round_finished: int | None = None
+    # Judges' decision sub-type -- "unanimous" | "split" | "majority" -- only set
+    # when method == "decision". See engine/judges.py.
+    decision_type: str | None = None
+    # Submission category -- "choke" | "joint_lock" | "leg_lock" | "other" -- only
+    # set when method == "submission". Cosmetic/reporting tag, not mechanically
+    # simulated. See engine/finish_check.py SUBMISSION_TYPE_WEIGHTS.
+    submission_type: str | None = None
 
 
 @dataclass
