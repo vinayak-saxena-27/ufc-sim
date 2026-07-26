@@ -15,7 +15,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from career.tiers import TIER_LEVELS, TIER_RULESET, TIER_CONFIG, generate_all_tiers
 from engine.fight_engine import simulate_full_fight, TICKS_PER_ROUND, TICK_SECONDS
-from test_fixtures import make_style_fighter
 
 PASS = "PASS"
 FAIL = "FAIL"
@@ -134,17 +133,24 @@ for tier_key in ["tier2", "tier3", "tier4"]:
         rs.title_rounds == 5,
     )
 
-# Simulate a title fight at tier2 and confirm it can go past round 3.
-# Use evenly matched fighters to maximise chance of going the distance.
+# Simulate title fights at tier2 and confirm the format can go past round 3.
+# Draw random pairs from the real tier2 pool (natural attribute variance, esp.
+# chin/defense) rather than a synthetic zero-variance "flat" fixture: post
+# calibration-session retune (KO_TKO_THRESHOLD 10.0 -> 2.8, see
+# CALIBRATION_LOG.md), two identical zero-variance fighters cross the KO
+# threshold almost immediately every time (0/200 samples reached round 3 in
+# an isolated check), while realistic population pairs still reach round 5
+# in a healthy fraction of fights (~13-18% in sampling) -- the synthetic
+# fixture stopped being representative, not the title-fight round format.
 random.seed(404)
-fa_title = make_style_fighter("TitleA", target=0.0, style="flat")
-fa_title.tier = "tier2"
-fb_title = make_style_fighter("TitleB", target=0.0, style="flat")
-fb_title.tier = "tier2"
-title_outcomes = [simulate_full_fight(fa_title, fb_title, is_title=True) for _ in range(20)]
+title_pool = pools["lightweight"]["tier2"]
+title_outcomes = [
+    simulate_full_fight(*random.sample(title_pool, 2), is_title=True)
+    for _ in range(60)
+]
 max_rounds = max(len(o.rounds) for o in title_outcomes)
 check(
-    f"tier2 title fight (20 runs): max rounds played = {max_rounds} (expected >3)",
+    f"tier2 title fight (60 runs): max rounds played = {max_rounds} (expected >3)",
     max_rounds > 3,
 )
 print()
@@ -203,7 +209,7 @@ if failures:
     for f in failures:
         print(f"  - {f}")
     print("=" * 60)
-    _sys.exit(1)
+    sys.exit(1)
 else:
     print("ALL CHECKS PASSED")
     print("=" * 60)
